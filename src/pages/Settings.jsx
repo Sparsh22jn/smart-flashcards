@@ -1,10 +1,13 @@
 import { signOut } from '../lib/auth'
+import { useTheme } from '../core/ThemeContext'
 
 /**
  * Settings page — based on Settings.html Stitch design.
  * Large editorial typography, quiet layout.
  */
 export default function Settings({ user, costTracker }) {
+  const { isDark, toggleTheme } = useTheme()
+
   return (
     <div className="max-w-xl mx-auto px-6 pt-8 pb-12 min-h-[80vh]">
       {/* Header */}
@@ -51,12 +54,22 @@ export default function Settings({ user, costTracker }) {
         {/* Appearance */}
         <div className="group">
           <div className="space-y-1">
-            <button className="w-full flex justify-between items-center py-4 px-4 rounded-xl transition-all duration-300 hover:bg-surface-container-high active:scale-[0.98]">
+            <button
+              onClick={toggleTheme}
+              className="w-full flex justify-between items-center py-4 px-4 rounded-xl transition-all duration-300 hover:bg-surface-container-high active:scale-[0.98]"
+            >
               <span className="font-headline text-2xl font-semibold tracking-tight text-on-surface">Appearance</span>
-              <span className="material-symbols-outlined text-on-surface-variant/30">chevron_right</span>
+              <div className="flex items-center gap-3">
+                <span className="text-on-surface-variant text-sm font-medium">
+                  {isDark ? 'Dark' : 'Light'}
+                </span>
+                <div className={`relative w-12 h-6 rounded-full transition-colors duration-300 ${isDark ? 'bg-primary' : 'bg-outline-variant'}`}>
+                  <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-surface-container-lowest shadow transition-transform duration-300 ${isDark ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                </div>
+              </div>
             </button>
             <div className="px-4 text-on-surface-variant text-sm">
-              Theme and display preferences. Coming soon.
+              Switch between light and dark theme.
             </div>
           </div>
         </div>

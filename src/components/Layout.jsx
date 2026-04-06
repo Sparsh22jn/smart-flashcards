@@ -1,4 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
+import { useTheme } from '../core/ThemeContext'
 
 const NAV_ITEMS = [
   { to: '/', icon: 'home', iconFilled: 'home', label: 'Home' },
@@ -10,6 +11,7 @@ const NAV_ITEMS = [
 
 export default function Layout({ children }) {
   const location = useLocation()
+  const { isDark, toggleTheme } = useTheme()
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
@@ -32,6 +34,15 @@ export default function Layout({ children }) {
 
           {/* Desktop nav */}
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-on-surface-variant">
+            <button
+              onClick={toggleTheme}
+              className="text-on-surface-variant hover:text-primary transition-colors"
+              aria-label="Toggle dark mode"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>
+                {isDark ? 'light_mode' : 'dark_mode'}
+              </span>
+            </button>
             {NAV_ITEMS.slice(1).map(item => (
               <NavLink
                 key={item.to}
