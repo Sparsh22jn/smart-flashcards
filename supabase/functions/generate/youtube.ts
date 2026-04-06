@@ -83,35 +83,45 @@ export function extractVideoId(url: string): string | null {
 }
 
 /**
- * Fetch and parse the YouTube video page to extract player response.
+ * Fetch player response via YouTube's innertube API.
+ * This is far less likely to be rate-limited than scraping the HTML page,
+ * because it's the same API YouTube's own web client uses.
  */
 async function fetchPlayerResponse(videoId: string): Promise<any> {
-  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  const INNERTUBE_CLIENT_VERSION = "2.20240530.02.00";
 
-  const res = await fetchWithRetry(url, {
+  const res = await fetchWithRetry("https://www.youtube.com/youtubei/v1/player", {
+    method: "POST",
     headers: {
+      "Content-Type": "application/json",
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept-Language": "en-US,en;q=0.9",
     },
+    body: JSON.stringify({
+      videoId,
+      context: {
+        client: {
+          hl: "en",
+          gl: "US",
+          clientName: "WEB",
+          clientVersion: INNERTUBE_CLIENT_VERSION,
+        },
+      },
+    }),
   });
 
   if (!res.ok) {
-    throw new Error(`Failed to fetch video page: HTTP ${res.status}`);
+    throw new Error(`Failed to fetch video info: HTTP ${res.status}`);
   }
 
-  const html = await res.text();
+  const data = await res.json();
 
-  // Extract ytInitialPlayerResponse from the page
-  const match = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});/s);
-  if (!match) {
-    throw new Error("Could not find player response in page HTML. Video may be private or unavailable.");
+  if (data.playabilityStatus?.status === "ERROR") {
+    throw new Error(
+      data.playabilityStatus?.reason || "Video is unavailable or private.",
+    );
   }
 
-  try {
-    return JSON.parse(match[1]);
-  } catch {
-    throw new Error("Failed to parse player response JSON.");
-  }
+  return data;
 }
 
 /**

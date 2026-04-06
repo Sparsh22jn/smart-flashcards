@@ -18,6 +18,7 @@ export default function Generate({ user, onDeckCreated }) {
   const [status, setStatus] = useState('')
   const [error, setError] = useState(null)
   const [difficulty, setDifficulty] = useState('medium')
+  const [purpose, setPurpose] = useState('general')
   const [source, setSource] = useState(location.state?.topic || '')
   const [saving, setSaving] = useState(false)
   const [videoMeta, setVideoMeta] = useState(null) // YouTube metadata from edge function
@@ -28,6 +29,12 @@ export default function Generate({ user, onDeckCreated }) {
     { value: 'easy', label: 'Easy' },
     { value: 'medium', label: 'Medium' },
     { value: 'hard', label: 'Advanced' },
+  ]
+
+  const purposeOptions = [
+    { value: 'general', label: 'General' },
+    { value: 'interview', label: 'Interview Prep' },
+    { value: 'exam', label: 'Exam Prep' },
   ]
 
   const detectSourceType = (text) => {
@@ -92,6 +99,7 @@ export default function Generate({ user, onDeckCreated }) {
         sourceType,
         numCards,
         difficulty,
+        purpose,
         onChunk: (data) => {
           if (data.status) setStatus(data.status)
           if (data.meta) setVideoMeta(data.meta)
@@ -191,6 +199,26 @@ export default function Generate({ user, onDeckCreated }) {
 
       {/* Settings */}
       <section className="flex flex-wrap items-end gap-6 mb-8">
+        <div>
+          <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
+            Purpose
+          </label>
+          <div className="flex gap-2">
+            {purposeOptions.map(p => (
+              <button
+                key={p.value}
+                onClick={() => setPurpose(p.value)}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                  purpose === p.value
+                    ? 'primary-gradient text-on-primary editorial-shadow'
+                    : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div>
           <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
             Difficulty

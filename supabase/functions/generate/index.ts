@@ -29,6 +29,11 @@ DIFFICULTY TIERS:
 - Medium: application, clinical/practical vignettes, "why" and "how" questions, compare-and-contrast
 - Hard (Advanced): synthesis, differential diagnosis, edge cases, multi-step reasoning, exam-style questions with distractors, questions that require integrating multiple concepts
 
+PURPOSE MODES — Adapt question framing based on the selected purpose:
+- General: standard study flashcards (default behavior)
+- Interview Prep: frame questions the way an interviewer would ask them. Use formats like "Explain…", "Walk me through…", "How would you approach…", "What's the difference between X and Y?", "Tell me about a time…" (for behavioral). Answers should be structured (STAR format for behavioral, clear technical explanations for technical). Include follow-up probes an interviewer might ask. Mnemonics should help remember key talking points.
+- Exam Prep: frame questions in formal exam style (MCQ stems, short-answer, case-based). Include distractor reasoning where applicable. Answers should cite mechanisms, rules, or principles explicitly.
+
 CARD QUALITY RULES:
 1. Each flashcard must have: front (question), back (answer), explanation (ELI5), mnemonic (memory trick)
 2. Questions must be SPECIFIC and TESTABLE — never vague ("Tell me about X"). Use "Which mechanism…", "What distinguishes X from Y…", "A patient presents with… what is the most likely…"
@@ -91,8 +96,15 @@ Deno.serve(async (req: Request) => {
       const { data: { user }, error: authError } = await supabase.auth.getUser(token);
       if (authError || !user) { await fail("Invalid token"); return; }
 
-      const { source, sourceType, numCards = 10, difficulty = "medium" } = await req.json();
+      const { source, sourceType, numCards = 10, difficulty = "medium", purpose = "general" } = await req.json();
       if (!source) { await fail("Source is required"); return; }
+
+      // ── Purpose guide ────────────────────────────────────────────
+      const purposeGuide = purpose === "interview"
+        ? `\nPURPOSE: Interview Prep\nFrame every question the way an interviewer would ask it. Use formats like "Explain…", "Walk me through…", "How would you approach…", "What's the difference between X and Y?", "Tell me about a time…" (for behavioral questions). Structure answers using STAR format for behavioral and clear technical explanations for technical. Include a likely follow-up probe an interviewer might ask. Mnemonics should help remember key talking points.\n`
+        : purpose === "exam"
+        ? `\nPURPOSE: Exam Prep\nFrame every question in formal exam style: MCQ stems, short-answer, or case-based prompts. Include distractor reasoning where applicable. Answers must cite mechanisms, rules, or principles explicitly.\n`
+        : "";
 
       // ── YouTube: Extract transcript ──────────────────────────────
       let userMessage = "";
@@ -133,7 +145,8 @@ Deno.serve(async (req: Request) => {
 
           userMessage =
             `Generate exactly ${numCards} flashcards from this YouTube video transcript.\n\n` +
-            `DIFFICULTY: ${difficulty}\n${difficultyGuide}\n\n` +
+            `DIFFICULTY: ${difficulty}\n${difficultyGuide}\n` +
+            purposeGuide + `\n` +
             `VIDEO: "${transcript.title}" by ${transcript.channel} (${transcript.duration})\n` +
             `LANGUAGE: ${transcript.language}\n\n` +
             `TRANSCRIPT:\n${transcriptText}\n\n` +
@@ -156,7 +169,8 @@ Deno.serve(async (req: Request) => {
 
         userMessage =
           `Generate exactly ${numCards} flashcards from the following content.\n\n` +
-          `DIFFICULTY: ${difficulty}\n${pasteDiffGuide}\n\n` +
+          `DIFFICULTY: ${difficulty}\n${pasteDiffGuide}\n` +
+          purposeGuide + `\n` +
           `CONTENT:\n${source}`;
 
       } else {
@@ -170,7 +184,8 @@ Deno.serve(async (req: Request) => {
 
         userMessage =
           `Generate exactly ${numCards} flashcards about: ${source}\n\n` +
-          `DIFFICULTY: ${difficulty}\n${topicDiffGuide}\n\n` +
+          `DIFFICULTY: ${difficulty}\n${topicDiffGuide}\n` +
+          purposeGuide + `\n` +
           `Cover the most important concepts comprehensively. Match the depth and question style to what is typically considered ${difficulty} within this domain.`;
       }
 

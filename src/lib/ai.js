@@ -4,7 +4,7 @@ import { supabase } from './supabase'
  * Stream flashcard generation from Claude via Edge Function.
  * Same SSE pattern as IronLog's chat streaming.
  */
-export async function streamGenerate({ source, sourceType, numCards, difficulty, onChunk, onDone, onError }) {
+export async function streamGenerate({ source, sourceType, numCards, difficulty, purpose, onChunk, onDone, onError }) {
   const abort = new AbortController()
 
   try {
@@ -18,7 +18,7 @@ export async function streamGenerate({ source, sourceType, numCards, difficulty,
         'Authorization': `Bearer ${session.access_token}`,
         'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
       },
-      body: JSON.stringify({ source, sourceType, numCards, difficulty }),
+      body: JSON.stringify({ source, sourceType, numCards, difficulty, purpose }),
       signal: abort.signal,
     })
 
