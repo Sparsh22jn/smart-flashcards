@@ -34,15 +34,6 @@ export default function Layout({ children }) {
 
           {/* Desktop nav */}
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-on-surface-variant">
-            <button
-              onClick={toggleTheme}
-              className="text-on-surface-variant hover:text-primary transition-colors"
-              aria-label="Toggle dark mode"
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>
-                {isDark ? 'light_mode' : 'dark_mode'}
-              </span>
-            </button>
             {NAV_ITEMS.slice(1).map(item => (
               <NavLink
                 key={item.to}
@@ -55,6 +46,17 @@ export default function Layout({ children }) {
               </NavLink>
             ))}
           </div>
+
+          {/* Dark mode toggle — always visible */}
+          <button
+            onClick={toggleTheme}
+            className="p-2 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors"
+            aria-label="Toggle dark mode"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>
+              {isDark ? 'light_mode' : 'dark_mode'}
+            </span>
+          </button>
         </nav>
       </header>
 
