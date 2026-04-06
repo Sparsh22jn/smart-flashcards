@@ -145,3 +145,43 @@ h1, h2, h3, h4, h5, h6 {
   background-color: var(--color-primary-container);
   color: var(--color-on-primary-container);
 }
+
+/* Dark mode overrides */
+.dark {
+  --color-primary: #5ddbb7;
+  --color-primary-dim: #4cc9a5;
+  --color-primary-container: #004e3a;
+  --color-on-primary: #00382a;
+  --color-on-primary-container: #7ff8cf;
+
+  --color-surface: #0f1313;
+  --color-surface-container-lowest: #090c0c;
+  --color-surface-container-low: #171c1c;
+  --color-surface-container: #1b2020;
+  --color-surface-container-high: #252b2b;
+  --color-surface-container-highest: #303737;
+  --color-surface-dim: #090c0c;
+
+  --color-on-surface: #dde4e3;
+  --color-on-surface-variant: #9ab4b2;
+  --color-outline: #6e8f8d;
+  --color-outline-variant: #3d5957;
+
+  --color-error: #e07e7b;
+  --color-error-container: #5c2222;
+  --color-on-error: #260f0f;
+
+  --color-secondary: #c4c5d6;
+  --color-tertiary: #b3cc99;
+
+  --color-inverse-surface: #e0e7e7;
+  --color-inverse-on-surface: #3b4444;
+
+  --shadow-editorial: 0px 12px 32px rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0px 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dark .loading-shimmer {
+  background: linear-gradient(90deg, #1b2020 25%, #252b2b 50%, #1b2020 75%);
+  background-size: 200% 100%;
+}
