@@ -4,8 +4,10 @@ import { useState } from 'react'
  * Flashcard with flip animation — the hero interaction.
  * Based on Study.html Stitch design.
  */
-export default function FlashCard({ card, showExplanation, showMnemonic, onRequestELI5, onRequestMnemonic }) {
-  const [flipped, setFlipped] = useState(false)
+export default function FlashCard({ card, flipped: controlledFlip, onFlip, showExplanation, showMnemonic, onRequestELI5, onRequestMnemonic }) {
+  const [internalFlip, setInternalFlip] = useState(false)
+  const flipped = controlledFlip !== undefined ? controlledFlip : internalFlip
+  const handleFlip = onFlip || (() => setInternalFlip(!internalFlip))
 
   return (
     <div className="w-full max-w-3xl mx-auto">
@@ -13,7 +15,7 @@ export default function FlashCard({ card, showExplanation, showMnemonic, onReque
       <div
         className="flip-container w-full cursor-pointer"
         style={{ minHeight: 320 }}
-        onClick={() => setFlipped(!flipped)}
+        onClick={handleFlip}
       >
         <div className={`flip-card relative w-full ${flipped ? 'flipped' : ''}`} style={{ minHeight: 320 }}>
           {/* Front — Question */}

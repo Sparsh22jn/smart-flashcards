@@ -179,7 +179,10 @@ export default function Study({ user, cardProgressMap, onProgressUpdate }) {
 
       {/* Flashcard */}
       <FlashCard
+        key={currentCard.id}
         card={currentCard}
+        flipped={showAnswer}
+        onFlip={() => setShowAnswer(prev => !prev)}
         showExplanation={showELI5}
         showMnemonic={showMnemonic}
         onRequestELI5={() => setShowELI5(true)}

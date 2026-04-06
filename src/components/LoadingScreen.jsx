@@ -40,8 +40,8 @@ export default function LoadingScreen({ source, sourceType, status, cardCount })
     : source?.length > 50 ? source.slice(0, 50) + '...' : source
 
   return (
-    <div className="fixed inset-0 z-40 bg-surface flex flex-col items-center justify-center overflow-y-auto">
-      <div className="w-full max-w-2xl mx-auto px-6 py-16 flex flex-col items-center">
+    <div className="fixed inset-0 z-40 bg-surface flex flex-col items-center overflow-y-auto">
+      <div className="w-full max-w-2xl mx-auto px-6 py-16 flex flex-col items-center my-auto">
 
         {/* Header */}
         <div className="text-center mb-14 animate-fade-in">

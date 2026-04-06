@@ -54,7 +54,10 @@ export default function Generate({ user, onDeckCreated }) {
 
   // Show estimated card count based on current source & difficulty
   const estimatedCards = (() => {
-    if (!source) return null
+    if (!source && !pdfMeta) {
+      // Default to topic estimate based on difficulty alone
+      return calculateCardCount('', 'topic', difficulty, null)
+    }
     const st = pdfMeta ? 'pdf' : detectSourceType(source)
     return calculateCardCount(source, st, difficulty, pdfMeta)
   })()
