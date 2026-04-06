@@ -2,7 +2,7 @@
  * Progress / Analytics page — based on Progress.html Stitch design.
  * Bento grid with retention, streaks, study time, and discipline breakdown.
  */
-export default function Progress({ studySessions, decks }) {
+export default function Progress({ studySessions, decks, streak }) {
   // Calculate stats
   const now = new Date()
   const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7)
@@ -18,12 +18,12 @@ export default function Progress({ studySessions, decks }) {
   const totalSeconds = weeklySessions.reduce((sum, s) => sum + (s.duration_seconds || 0), 0)
   const hoursStudied = (totalSeconds / 3600).toFixed(1)
 
-  // Weekly streak (simplified)
+  // Streak — prefer DB value, fall back to computing from sessions
   const daySet = new Set()
   weeklySessions.forEach(s => {
     daySet.add(new Date(s.created_at).toISOString().slice(0, 10))
   })
-  const streakDays = daySet.size
+  const streakDays = streak?.current_streak ?? daySet.size
 
   // Day dots for streak visualization
   const dayDots = Array.from({ length: 7 }, (_, i) => {

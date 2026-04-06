@@ -4,9 +4,9 @@ import { useNavigate } from 'react-router-dom'
  * Home / Dashboard — based on Welcome.html + Quiet_Entry.html Stitch designs.
  * The "What would you like to learn today?" screen.
  */
-export default function Home({ user, decks, studySessions }) {
+export default function Home({ user, userProfile, decks, studySessions }) {
   const navigate = useNavigate()
-  const firstName = user?.user_metadata?.display_name?.split(' ')[0] || user?.email?.split('@')[0] || ''
+  const firstName = userProfile?.display_name?.split(' ')[0] || user?.user_metadata?.display_name?.split(' ')[0] || user?.email?.split('@')[0] || ''
 
   const greeting = (() => {
     const h = new Date().getHours()

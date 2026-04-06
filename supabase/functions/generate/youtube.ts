@@ -28,6 +28,38 @@ export interface TranscriptResult {
 }
 
 /**
+ * Fetch with exponential backoff retry for 429 and 5xx errors.
+ * Retries up to 3 times: ~1s, ~2s, ~4s (with jitter).
+ */
+async function fetchWithRetry(
+  url: string | URL,
+  options: RequestInit,
+  maxRetries = 3,
+): Promise<Response> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url.toString(), options);
+    if (res.ok || (res.status !== 429 && res.status < 500)) {
+      return res;
+    }
+    lastError = new Error(`HTTP ${res.status}`);
+    if (attempt < maxRetries) {
+      const baseDelay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+      const jitter = Math.random() * 500;
+      await new Promise((r) => setTimeout(r, baseDelay + jitter));
+    }
+  }
+  if (lastError?.message.includes("429")) {
+    throw new Error(
+      "YouTube is rate-limiting requests. Please wait a minute and try again, or paste the video transcript directly.",
+    );
+  }
+  throw new Error(
+    `YouTube request failed after ${maxRetries + 1} attempts: ${lastError?.message}`,
+  );
+}
+
+/**
  * Extract video ID from various YouTube URL formats.
  */
 export function extractVideoId(url: string): string | null {
@@ -56,7 +88,7 @@ export function extractVideoId(url: string): string | null {
 async function fetchPlayerResponse(videoId: string): Promise<any> {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       "Accept-Language": "en-US,en;q=0.9",
@@ -115,7 +147,7 @@ async function fetchCaptionTrack(trackUrl: string): Promise<TranscriptSegment[]>
   const url = new URL(trackUrl);
   url.searchParams.set("fmt", "json3");
 
-  const res = await fetch(url.toString(), {
+  const res = await fetchWithRetry(url.toString(), {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     },
@@ -147,7 +179,7 @@ async function fetchCaptionTrack(trackUrl: string): Promise<TranscriptSegment[]>
  * Fallback: Fetch caption track as XML and parse it.
  */
 async function fetchCaptionTrackXML(trackUrl: string): Promise<TranscriptSegment[]> {
-  const res = await fetch(trackUrl, {
+  const res = await fetchWithRetry(trackUrl, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     },

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import FlashCard from '../components/FlashCard'
 import RatingButtons from '../components/RatingButtons'
-import { fetchCards, upsertCardProgress, insertStudySession } from '../lib/data'
+import { fetchCards, upsertCardProgress, insertStudySession, insertReviewLog } from '../lib/data'
 import { createNewCard, scheduleReview } from '../core/fsrs'
 
 /**
@@ -19,6 +19,7 @@ export default function Study({ user, cardProgressMap, onProgressUpdate }) {
   const [showMnemonic, setShowMnemonic] = useState(false)
   const [loading, setLoading] = useState(true)
   const [sessionStats, setSessionStats] = useState({ studied: 0, correct: 0, startTime: Date.now() })
+  const [cardStartTime, setCardStartTime] = useState(Date.now())
   const [complete, setComplete] = useState(false)
 
   useEffect(() => {
@@ -40,11 +41,25 @@ export default function Study({ user, cardProgressMap, onProgressUpdate }) {
   const handleRate = useCallback(async (rating) => {
     if (!currentCard || !user) return
 
+    const timeSpentMs = Date.now() - cardStartTime
     const updated = scheduleReview(progress, rating)
 
     // Save to DB
     await upsertCardProgress(user.id, currentCard.id, updated)
     onProgressUpdate?.(currentCard.id, updated)
+
+    // Log review (non-blocking)
+    insertReviewLog(user.id, {
+      cardId: currentCard.id,
+      deckId,
+      rating,
+      stateBefore: progress.state ?? 0,
+      stateAfter: updated.state ?? 0,
+      easeFactorBefore: progress.easeFactor,
+      intervalBeforeDays: progress.intervalDays ?? 0,
+      intervalAfterDays: updated.intervalDays ?? 0,
+      timeSpentMs,
+    }).catch(() => {})
 
     // Update stats
     setSessionStats(prev => ({
@@ -59,6 +74,7 @@ export default function Study({ user, cardProgressMap, onProgressUpdate }) {
       setShowAnswer(false)
       setShowELI5(false)
       setShowMnemonic(false)
+      setCardStartTime(Date.now())
     } else {
       // Session complete
       setComplete(true)
@@ -70,7 +86,7 @@ export default function Study({ user, cardProgressMap, onProgressUpdate }) {
         duration,
       })
     }
-  }, [currentCard, user, progress, currentIdx, cards.length, sessionStats, deckId, onProgressUpdate])
+  }, [currentCard, user, progress, currentIdx, cards.length, sessionStats, deckId, onProgressUpdate, cardStartTime])
 
   if (loading) {
     return (

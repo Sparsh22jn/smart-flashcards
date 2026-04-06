@@ -128,11 +128,22 @@ export async function streamChat({ message, conversation, cardContext, onChunk, 
 }
 
 /**
- * Get AI usage for rate limiting.
+ * Get AI usage stats (no rate limit enforced — free tier is unlimited).
+ * Kept for future freemium gating.
  */
 export async function getAiUsage() {
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { remaining: 0, limit: 50 }
+  if (!user) return { remaining: Infinity, limit: Infinity }
+
+  return { remaining: Infinity, limit: Infinity }
+}
+
+/**
+ * Increment AI usage counter after a generation.
+ */
+export async function incrementAiUsage() {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return
 
   const { data } = await supabase
     .from('user_preferences')
@@ -143,7 +154,13 @@ export async function getAiUsage() {
 
   const today = new Date().toISOString().slice(0, 10)
   const usage = data?.value || {}
-  const todayCount = usage.date === today ? (usage.count || 0) : 0
+  const count = usage.date === today ? (usage.count || 0) + 1 : 1
 
-  return { remaining: 50 - todayCount, limit: 50 }
+  await supabase
+    .from('user_preferences')
+    .upsert({
+      user_id: user.id,
+      key: 'ai_usage',
+      value: { date: today, count },
+    }, { onConflict: 'user_id,key' })
 }

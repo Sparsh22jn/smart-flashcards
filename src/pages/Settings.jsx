@@ -31,17 +31,19 @@ export default function Settings({ user, costTracker }) {
           </div>
         </div>
 
-        {/* Budget / Cost */}
+        {/* Usage */}
         <div className="group">
           <div className="space-y-1">
             <div className="w-full flex justify-between items-center py-4 px-4 rounded-xl">
-              <span className="font-headline text-2xl font-semibold tracking-tight text-on-surface">Budget</span>
+              <span className="font-headline text-2xl font-semibold tracking-tight text-on-surface">Usage</span>
               <span className="text-primary font-headline font-bold">
-                ${costTracker?.total_cost?.toFixed(2) || '0.00'}
+                {costTracker?.total_input_tokens || costTracker?.total_output_tokens
+                  ? `${((costTracker.total_input_tokens || 0) + (costTracker.total_output_tokens || 0)).toLocaleString()} tokens`
+                  : 'No usage yet'}
               </span>
             </div>
             <div className="px-4 text-on-surface-variant text-sm">
-              Total spent on AI generation. Billed directly to your Anthropic account.
+              Total AI usage for your account. All features are free during the beta.
             </div>
           </div>
         </div>

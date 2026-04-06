@@ -15,18 +15,28 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const SYSTEM_PROMPT = `You are an expert educator and flashcard creator. Your task is to generate high-quality flashcards from the given source material.
+const SYSTEM_PROMPT = `You are a professional-grade flashcard author used by medical students, law students, PhD candidates, and other advanced learners preparing for high-stakes exams (USMLE, bar exam, board certifications, qualifying exams).
 
-RULES:
+DOMAIN DETECTION — Adapt your question style:
+- Medical/clinical → pathophysiology, clinical vignettes, drug mechanisms, differentials
+- Legal → rules, elements, landmark holdings, policy rationales
+- Scientific → mechanisms, experimental design, data interpretation
+- Humanities → analysis, comparison, historiography, theoretical frameworks
+- Technical → architecture, trade-offs, failure modes, implementation details
+
+DIFFICULTY TIERS:
+- Easy: definitions, core mechanisms, foundational "what is" questions
+- Medium: application, clinical/practical vignettes, "why" and "how" questions, compare-and-contrast
+- Hard (Advanced): synthesis, differential diagnosis, edge cases, multi-step reasoning, exam-style questions with distractors, questions that require integrating multiple concepts
+
+CARD QUALITY RULES:
 1. Each flashcard must have: front (question), back (answer), explanation (ELI5), mnemonic (memory trick)
-2. Questions should test understanding, not just recall
-3. Follow SuperMemo's 20 Rules of Knowledge Formulation:
-   - Keep it simple
-   - Use cloze deletion where appropriate
-   - Avoid sets and enumerations
-   - Use imagery and mnemonics
-4. Explanations should be genuinely simple — as if explaining to a curious child
-5. Mnemonics should use varied techniques: acronyms, stories, visual associations, method of loci, rhymes
+2. Questions must be SPECIFIC and TESTABLE — never vague ("Tell me about X"). Use "Which mechanism…", "What distinguishes X from Y…", "A patient presents with… what is the most likely…"
+3. Answers must include the mechanism, reasoning, or key distinction — not just a bare fact
+4. Cards are ATOMIC BUT DEEP — one concept per card, but that concept explored thoroughly
+5. Follow SuperMemo's 20 Rules: avoid sets/enumerations, use cloze deletion where it fits, leverage imagery
+6. Explanations should be genuinely simple — as if explaining to a curious 10-year-old
+7. Mnemonics should be professional-grade and varied: acronyms, stories, visual associations, method of loci, rhymes, peg systems
 
 OUTPUT FORMAT:
 Return a JSON array of flashcard objects. Each object:
@@ -115,13 +125,20 @@ Deno.serve(async (req: Request) => {
             ? chunks[0] + `\n\n[... transcript continues for ${chunks.length} sections total ...]`
             : transcript.fullText;
 
+          const difficultyGuide = difficulty === "easy"
+            ? "Easy: definitions, core mechanisms, foundational 'what is' questions."
+            : difficulty === "medium"
+            ? "Medium: application, clinical/practical vignettes, 'why' and 'how' questions, compare-and-contrast."
+            : "Advanced: synthesis, differential diagnosis, edge cases, multi-step reasoning, exam-style questions. Go BEYOND the transcript — add related concepts, edge cases, and exam-relevant cards not explicitly stated in the source.";
+
           userMessage =
-            `Generate ${numCards} ${difficulty}-difficulty flashcards from this YouTube video transcript.\n\n` +
+            `Generate exactly ${numCards} flashcards from this YouTube video transcript.\n\n` +
+            `DIFFICULTY: ${difficulty}\n${difficultyGuide}\n\n` +
             `VIDEO: "${transcript.title}" by ${transcript.channel} (${transcript.duration})\n` +
             `LANGUAGE: ${transcript.language}\n\n` +
             `TRANSCRIPT:\n${transcriptText}\n\n` +
             `Focus on the key concepts, facts, and insights discussed in the video. ` +
-            `Create flashcards that test understanding of the main ideas, not trivial details.`;
+            `Create flashcards that test deep understanding, not trivia or surface details.`;
 
         } catch (err) {
           await fail(`YouTube error: ${err.message}`);
@@ -131,15 +148,30 @@ Deno.serve(async (req: Request) => {
       } else if (sourceType === "paste" || sourceType === "pdf" || sourceType === "document") {
         // ── Text content ──────────────────────────────────────────
         await send({ status: "Processing your content..." });
+        const pasteDiffGuide = difficulty === "easy"
+          ? "Easy: definitions, core mechanisms, foundational 'what is' questions. Stay within the source material."
+          : difficulty === "medium"
+          ? "Medium: application, clinical/practical vignettes, 'why' and 'how' questions, compare-and-contrast. Stay within the source material."
+          : "Advanced: synthesis, differential diagnosis, edge cases, multi-step reasoning, exam-style questions. Generate cards from the content AND additional cards on related concepts, edge cases, and exam-relevant material NOT in the source.";
+
         userMessage =
-          `Generate ${numCards} ${difficulty}-difficulty flashcards from the following content:\n\n${source}`;
+          `Generate exactly ${numCards} flashcards from the following content.\n\n` +
+          `DIFFICULTY: ${difficulty}\n${pasteDiffGuide}\n\n` +
+          `CONTENT:\n${source}`;
 
       } else {
         // ── Topic ─────────────────────────────────────────────────
         await send({ status: `Generating cards about "${source}"...` });
+        const topicDiffGuide = difficulty === "easy"
+          ? "Easy: definitions, core mechanisms, foundational 'what is' questions."
+          : difficulty === "medium"
+          ? "Medium: application, clinical/practical vignettes, 'why' and 'how' questions, compare-and-contrast."
+          : "Advanced: synthesis, differential diagnosis, edge cases, multi-step reasoning, exam-style questions with distractors, questions requiring integration of multiple concepts.";
+
         userMessage =
-          `Generate ${numCards} ${difficulty}-difficulty flashcards about: ${source}\n\n` +
-          `Cover the most important concepts comprehensively.`;
+          `Generate exactly ${numCards} flashcards about: ${source}\n\n` +
+          `DIFFICULTY: ${difficulty}\n${topicDiffGuide}\n\n` +
+          `Cover the most important concepts comprehensively. Match the depth and question style to what is typically considered ${difficulty} within this domain.`;
       }
 
       // ── Call Claude ──────────────────────────────────────────────
@@ -203,12 +235,14 @@ Deno.serve(async (req: Request) => {
       const outputTokens = result.usage?.output_tokens || 0;
       const cost = (inputTokens / 1_000_000) * 3.0 + (outputTokens / 1_000_000) * 15.0;
 
-      await supabase.rpc("increment_cost", {
-        user_id_input: user.id,
-        input_tokens_add: inputTokens,
-        output_tokens_add: outputTokens,
-        cost_add: cost,
-      }).catch(() => {}); // non-critical
+      try {
+        await supabase.rpc("increment_cost", {
+          user_id_input: user.id,
+          input_tokens_add: inputTokens,
+          output_tokens_add: outputTokens,
+          cost_add: cost,
+        });
+      } catch {} // non-critical
 
       // ── Send results ─────────────────────────────────────────────
       await send({

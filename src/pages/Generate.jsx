@@ -1,27 +1,34 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import InputBar from '../components/InputBar'
-import { streamGenerate } from '../lib/ai'
+import { streamGenerate, incrementAiUsage } from '../lib/ai'
 import { createDeck, insertCards } from '../lib/data'
 import { isYouTubeUrl, extractVideoId, getThumbnailUrl } from '../lib/youtube'
+import LoadingScreen from '../components/LoadingScreen'
 
 /**
  * Generate page — create flashcards from any source.
  * Full YouTube pipeline: URL → transcript extraction → Claude → flashcards.
  */
-export default function Generate({ user }) {
+export default function Generate({ user, onDeckCreated }) {
   const location = useLocation()
   const navigate = useNavigate()
   const [generating, setGenerating] = useState(false)
   const [generatedCards, setGeneratedCards] = useState([])
   const [status, setStatus] = useState('')
   const [error, setError] = useState(null)
-  const [numCards, setNumCards] = useState(10)
   const [difficulty, setDifficulty] = useState('medium')
   const [source, setSource] = useState(location.state?.topic || '')
   const [saving, setSaving] = useState(false)
   const [videoMeta, setVideoMeta] = useState(null) // YouTube metadata from edge function
   const [costInfo, setCostInfo] = useState(null)
+  const [activeSourceType, setActiveSourceType] = useState(null)
+
+  const difficultyOptions = [
+    { value: 'easy', label: 'Easy' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'hard', label: 'Advanced' },
+  ]
 
   const detectSourceType = (text) => {
     if (isYouTubeUrl(text)) return 'youtube'
@@ -29,7 +36,28 @@ export default function Generate({ user }) {
     return 'topic'
   }
 
+  const calculateCardCount = (input, sourceType, diff, fileMeta) => {
+    if (sourceType === 'topic') {
+      if (diff === 'easy') return 10
+      if (diff === 'medium') return 25
+      return 50 // advanced
+    }
+    // paste, pdf, youtube — scale with content length
+    const wordCount = fileMeta?.wordCount || input.split(/\s+/).length
+    if (diff === 'easy') return Math.max(5, Math.min(20, Math.round(wordCount / 100)))
+    const mediumCount = Math.max(10, Math.min(40, Math.round(wordCount / 50)))
+    if (diff === 'medium') return mediumCount
+    return mediumCount + 15 // advanced: beyond the source
+  }
+
   const [pdfMeta, setPdfMeta] = useState(null) // PDF metadata from client-side extraction
+
+  // Show estimated card count based on current source & difficulty
+  const estimatedCards = (() => {
+    if (!source) return null
+    const st = pdfMeta ? 'pdf' : detectSourceType(source)
+    return calculateCardCount(source, st, difficulty, pdfMeta)
+  })()
 
   const handleGenerate = async (input, fileMeta) => {
     setSource(fileMeta?.fileName || input)
@@ -41,10 +69,13 @@ export default function Generate({ user }) {
     setCostInfo(null)
 
     const sourceType = fileMeta?.type === 'pdf' ? 'pdf' : detectSourceType(input)
+    setActiveSourceType(sourceType)
 
     if (fileMeta?.type === 'pdf') {
       setPdfMeta({ fileName: fileMeta.fileName, pageCount: fileMeta.pageCount, wordCount: fileMeta.wordCount })
     }
+
+    const numCards = calculateCardCount(input, sourceType, difficulty, fileMeta)
 
     setStatus(
       sourceType === 'youtube' ? 'Connecting to YouTube...'
@@ -76,6 +107,7 @@ export default function Generate({ user }) {
         onDone: () => {
           if (!error) setStatus('Generation complete!')
           setGenerating(false)
+          incrementAiUsage().catch(() => {})
         },
         onError: (err) => {
           setError(err.message)
@@ -120,6 +152,7 @@ export default function Generate({ user }) {
       })
 
       await insertCards(deck.id, generatedCards)
+      onDeckCreated?.()
       navigate(`/library/${deck.id}`)
     } catch (err) {
       setError(err.message)
@@ -130,6 +163,16 @@ export default function Generate({ user }) {
 
   const isYouTube = isYouTubeUrl(source)
   const videoId = isYouTube ? extractVideoId(source) : null
+
+  if (generating && generatedCards.length === 0) {
+    return (
+      <LoadingScreen
+        source={source}
+        sourceType={activeSourceType}
+        status={status}
+      />
+    )
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-6 pt-8 pb-12">
@@ -144,47 +187,32 @@ export default function Generate({ user }) {
       </section>
 
       {/* Settings */}
-      <section className="flex flex-wrap gap-6 mb-8">
-        <div>
-          <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
-            Cards
-          </label>
-          <div className="flex gap-2">
-            {[5, 10, 15, 20].map(n => (
-              <button
-                key={n}
-                onClick={() => setNumCards(n)}
-                className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                  numCards === n
-                    ? 'primary-gradient text-on-primary editorial-shadow'
-                    : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high'
-                }`}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-        </div>
+      <section className="flex flex-wrap items-end gap-6 mb-8">
         <div>
           <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
             Difficulty
           </label>
           <div className="flex gap-2">
-            {['easy', 'medium', 'hard'].map(d => (
+            {difficultyOptions.map(d => (
               <button
-                key={d}
-                onClick={() => setDifficulty(d)}
-                className={`px-4 py-2 rounded-full text-sm font-medium capitalize transition-all ${
-                  difficulty === d
+                key={d.value}
+                onClick={() => setDifficulty(d.value)}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                  difficulty === d.value
                     ? 'primary-gradient text-on-primary editorial-shadow'
                     : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high'
                 }`}
               >
-                {d}
+                {d.label}
               </button>
             ))}
           </div>
         </div>
+        {estimatedCards && (
+          <span className="text-sm text-on-surface-variant font-medium pb-2">
+            ~{estimatedCards} cards
+          </span>
+        )}
       </section>
 
       {/* Input */}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import { getUser, onAuthChange, signOut } from './lib/auth'
-import { fetchDecks, fetchStudySessions, fetchCostTracker } from './lib/data'
+import { fetchDecks, fetchStudySessions, fetchCostTracker, fetchDeckProgress, fetchUserProfile, fetchStreak } from './lib/data'
 import Layout from './components/Layout'
 import AuthScreen from './components/AuthScreen'
 import Home from './pages/Home'
@@ -18,7 +18,10 @@ export default function App() {
   const [decks, setDecks] = useState([])
   const [studySessions, setStudySessions] = useState([])
   const [costTracker, setCostTracker] = useState(null)
+  const [deckProgress, setDeckProgress] = useState({})
   const [cardProgressMap, setCardProgressMap] = useState({})
+  const [userProfile, setUserProfile] = useState(null)
+  const [streak, setStreak] = useState(null)
   const [loading, setLoading] = useState(true)
 
   // Auth listener
@@ -30,16 +33,22 @@ export default function App() {
 
   // Load data when user logs in
   useEffect(() => {
-    if (!user) { setDecks([]); setStudySessions([]); setLoading(false); return }
+    if (!user) { setDecks([]); setStudySessions([]); setUserProfile(null); setStreak(null); setLoading(false); return }
     setLoading(true)
     Promise.all([
       fetchDecks(user.id),
       fetchStudySessions(user.id),
       fetchCostTracker(user.id),
-    ]).then(([d, ss, ct]) => {
+      fetchDeckProgress(user.id),
+      fetchUserProfile(user.id),
+      fetchStreak(user.id),
+    ]).then(([d, ss, ct, dp, up, st]) => {
       setDecks(d)
       setStudySessions(ss)
       setCostTracker(ct)
+      setDeckProgress(dp)
+      setUserProfile(up)
+      setStreak(st)
     }).catch(err => console.error('Load error:', err))
       .finally(() => setLoading(false))
   }, [user])
@@ -74,6 +83,7 @@ export default function App() {
           element={
             <Home
               user={user}
+              userProfile={userProfile}
               decks={decks}
               studySessions={studySessions}
             />
@@ -81,11 +91,11 @@ export default function App() {
         />
         <Route
           path="/generate"
-          element={<Generate user={user} />}
+          element={<Generate user={user} onDeckCreated={refreshDecks} />}
         />
         <Route
           path="/library"
-          element={<Library decks={decks} />}
+          element={<Library decks={decks} deckProgress={deckProgress} />}
         />
         <Route
           path="/library/:deckId"
@@ -107,6 +117,7 @@ export default function App() {
             <Progress
               studySessions={studySessions}
               decks={decks}
+              streak={streak}
             />
           }
         />

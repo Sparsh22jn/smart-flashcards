@@ -30,7 +30,7 @@ export default function DeckCard({ deck, progress }) {
           </p>
         </div>
         <span className="text-xs font-medium text-on-surface-variant tracking-widest uppercase">
-          {pct}% Complete
+          {pct}% Mastered
         </span>
       </div>
       {/* Subtle progress indicator */}

@@ -101,6 +101,27 @@ export async function deleteCard(cardId) {
   if (error) throw error
 }
 
+// ── Deck Progress ───────────────────────────────────────────────────
+
+export async function fetchDeckProgress(userId) {
+  const { data, error } = await supabase
+    .from('card_progress')
+    .select('card_id, interval_days, cards(deck_id)')
+    .eq('user_id', userId)
+  if (error) throw error
+
+  // Group by deck — count cards with interval >= 21 days as "mastered"
+  const progress = {}
+  for (const row of data) {
+    const deckId = row.cards?.deck_id
+    if (!deckId) continue
+    if (!progress[deckId]) progress[deckId] = { reviewed: 0, mastered: 0 }
+    progress[deckId].reviewed++
+    if (row.interval_days >= 21) progress[deckId].mastered++
+  }
+  return progress
+}
+
 // ── Study Progress (Spaced Repetition) ───────────────────────────────
 
 export async function fetchDueCards(userId) {
@@ -158,6 +179,55 @@ export async function fetchStudySessions(userId) {
     .order('created_at', { ascending: false })
     .limit(100)
   if (error) throw error
+  return data
+}
+
+// ── Review Log ──────────────────────────────────────────────────────
+
+export async function insertReviewLog(userId, { cardId, deckId, rating, stateBefore, stateAfter, stabilityBefore, stabilityAfter, difficultyBefore, difficultyAfter, easeFactorBefore, intervalBeforeDays, intervalAfterDays, elapsedDays, timeSpentMs }) {
+  const { error } = await supabase
+    .from('review_log')
+    .insert({
+      user_id: userId,
+      card_id: cardId,
+      deck_id: deckId,
+      rating,
+      state_before: stateBefore ?? 0,
+      state_after: stateAfter ?? 0,
+      stability_before: stabilityBefore ?? null,
+      stability_after: stabilityAfter ?? null,
+      difficulty_before: difficultyBefore ?? null,
+      difficulty_after: difficultyAfter ?? null,
+      ease_factor_before: easeFactorBefore ?? null,
+      interval_before_days: intervalBeforeDays ?? 0,
+      interval_after_days: intervalAfterDays ?? 0,
+      elapsed_days: elapsedDays ?? 0,
+      time_spent_ms: timeSpentMs ?? null,
+    })
+  if (error) console.error('review_log insert error:', error)
+}
+
+// ── User Profile ────────────────────────────────────────────────────
+
+export async function fetchUserProfile(userId) {
+  const { data, error } = await supabase
+    .from('user_profiles')
+    .select('*')
+    .eq('user_id', userId)
+    .single()
+  if (error && error.code !== 'PGRST116') throw error
+  return data
+}
+
+// ── Streaks ─────────────────────────────────────────────────────────
+
+export async function fetchStreak(userId) {
+  const { data, error } = await supabase
+    .from('streaks')
+    .select('*')
+    .eq('user_id', userId)
+    .single()
+  if (error && error.code !== 'PGRST116') throw error
   return data
 }
 
