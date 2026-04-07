@@ -189,7 +189,7 @@ Deno.serve(async (req: Request) => {
           `Cover the most important concepts comprehensively. Match the depth and question style to what is typically considered ${difficulty} within this domain.`;
       }
 
-      // ── Call Claude ──────────────────────────────────────────────
+      // ── Call Claude (streaming) ─────────────────────────────────
       await send({ status: "AI is generating your flashcards..." });
 
       const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -202,6 +202,7 @@ Deno.serve(async (req: Request) => {
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 8192,
+          stream: true,
           system: SYSTEM_PROMPT,
           messages: [{ role: "user", content: userMessage }],
         }),
@@ -213,8 +214,65 @@ Deno.serve(async (req: Request) => {
         return;
       }
 
-      const result = await response.json();
-      const text = result.content[0].text;
+      // Read Claude's SSE stream, accumulate text, send heartbeats to client
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = "";
+      let accumulatedText = "";
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let cardsSentSoFar = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split("\n");
+        sseBuffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          const payload = trimmed.slice(6).trim();
+          if (!payload || payload === "[DONE]") continue;
+
+          try {
+            const event = JSON.parse(payload);
+
+            if (event.type === "message_start" && event.message?.usage) {
+              inputTokens = event.message.usage.input_tokens || 0;
+            }
+
+            if (event.type === "content_block_delta" && event.delta?.text) {
+              accumulatedText += event.delta.text;
+
+              // Try to extract and stream complete cards as they arrive
+              try {
+                const partialMatch = accumulatedText.match(/\[[\s\S]*/);
+                if (partialMatch) {
+                  // Count complete card objects by matching closing braces followed by comma or ]
+                  const completeCards = (partialMatch[0].match(/\}[\s,]*(?=\{|\])/g) || []).length;
+                  // Also count if the last card is complete (ends with }])
+                  const endsComplete = /\}\s*\]\s*$/.test(partialMatch[0]);
+                  const totalComplete = endsComplete ? completeCards + 1 : completeCards;
+
+                  if (totalComplete > cardsSentSoFar) {
+                    await send({ status: `Generating cards... (${totalComplete} so far)` });
+                    cardsSentSoFar = totalComplete;
+                  }
+                }
+              } catch { /* partial parse — ignore */ }
+            }
+
+            if (event.type === "message_delta" && event.usage) {
+              outputTokens = event.usage.output_tokens || 0;
+            }
+          } catch { /* malformed SSE event — skip */ }
+        }
+      }
+
+      const text = accumulatedText;
 
       // ── Parse response ───────────────────────────────────────────
       let cards;
@@ -223,7 +281,12 @@ Deno.serve(async (req: Request) => {
       } catch {
         const match = text.match(/\[[\s\S]*\]/);
         if (match) {
-          cards = JSON.parse(match[0]);
+          try {
+            cards = JSON.parse(match[0]);
+          } catch {
+            await fail("Failed to parse generated cards from Claude response.");
+            return;
+          }
         } else {
           await fail("Failed to parse generated cards from Claude response.");
           return;
@@ -246,8 +309,6 @@ Deno.serve(async (req: Request) => {
       }));
 
       // ── Track cost ───────────────────────────────────────────────
-      const inputTokens = result.usage?.input_tokens || 0;
-      const outputTokens = result.usage?.output_tokens || 0;
       const cost = (inputTokens / 1_000_000) * 3.0 + (outputTokens / 1_000_000) * 15.0;
 
       try {

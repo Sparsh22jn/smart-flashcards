@@ -1,4 +1,5 @@
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { useGeneration } from '../contexts/GenerationContext'
 
 const NAV_ITEMS = [
   { to: '/', icon: 'home', iconFilled: 'home', label: 'Home' },
@@ -10,6 +11,10 @@ const NAV_ITEMS = [
 
 export default function Layout({ children }) {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { generating, generatedCards, status, reset } = useGeneration()
+  const isOnGeneratePage = location.pathname === '/generate'
+  const showBanner = !isOnGeneratePage && (generating || generatedCards.length > 0)
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
@@ -86,6 +91,40 @@ export default function Layout({ children }) {
           })}
         </div>
       </nav>
+
+      {/* Generation-in-progress floating banner */}
+      {showBanner && (
+        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 animate-slide-up flex items-center gap-2">
+          <button
+            onClick={() => navigate('/generate')}
+            className="bg-primary text-on-primary px-6 py-3 rounded-full
+                       editorial-shadow flex items-center gap-3 font-medium text-sm
+                       pressable hover:scale-105 transition-transform"
+          >
+            {generating ? (
+              <>
+                <span className="material-symbols-outlined animate-spin text-base">progress_activity</span>
+                <span>{status || 'Generating cards...'}</span>
+              </>
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                <span>{generatedCards.length} cards ready! Tap to view</span>
+              </>
+            )}
+          </button>
+          {!generating && (
+            <button
+              onClick={reset}
+              className="bg-surface-container text-on-surface-variant w-9 h-9 rounded-full
+                         flex items-center justify-center editorial-shadow
+                         hover:bg-surface-container-high transition-colors"
+            >
+              <span className="material-symbols-outlined text-sm">close</span>
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

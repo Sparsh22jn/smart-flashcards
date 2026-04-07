@@ -3,6 +3,7 @@ import { Routes, Route } from 'react-router-dom'
 import { getUser, onAuthChange, signOut } from './lib/auth'
 import { fetchDecks, fetchStudySessions, fetchCostTracker, fetchDeckProgress, fetchUserProfile, fetchStreak } from './lib/data'
 import Layout from './components/Layout'
+import { GenerationProvider } from './contexts/GenerationContext'
 import AuthScreen from './components/AuthScreen'
 import Home from './pages/Home'
 import Generate from './pages/Generate'
@@ -76,6 +77,7 @@ export default function App() {
   }
 
   return (
+    <GenerationProvider>
     <Layout>
       <Routes>
         <Route
@@ -132,5 +134,6 @@ export default function App() {
         />
       </Routes>
     </Layout>
+    </GenerationProvider>
   )
 }

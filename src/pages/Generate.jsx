@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import InputBar from '../components/InputBar'
-import { streamGenerate, incrementAiUsage } from '../lib/ai'
 import { createDeck, insertCards } from '../lib/data'
 import { isYouTubeUrl, extractVideoId, getThumbnailUrl } from '../lib/youtube'
 import LoadingScreen from '../components/LoadingScreen'
+import { useGeneration } from '../contexts/GenerationContext'
 
 /**
  * Generate page — create flashcards from any source.
@@ -13,17 +13,17 @@ import LoadingScreen from '../components/LoadingScreen'
 export default function Generate({ user, onDeckCreated }) {
   const location = useLocation()
   const navigate = useNavigate()
-  const [generating, setGenerating] = useState(false)
-  const [generatedCards, setGeneratedCards] = useState([])
-  const [status, setStatus] = useState('')
-  const [error, setError] = useState(null)
+
+  const {
+    generating, generatedCards, status, error,
+    videoMeta, pdfMeta, costInfo, activeSourceType, sourceLabel,
+    startGeneration, reset,
+  } = useGeneration()
+
   const [difficulty, setDifficulty] = useState('medium')
   const [purpose, setPurpose] = useState('general')
   const [source, setSource] = useState(location.state?.topic || '')
   const [saving, setSaving] = useState(false)
-  const [videoMeta, setVideoMeta] = useState(null) // YouTube metadata from edge function
-  const [costInfo, setCostInfo] = useState(null)
-  const [activeSourceType, setActiveSourceType] = useState(null)
 
   const difficultyOptions = [
     { value: 'easy', label: 'Easy' },
@@ -57,12 +57,9 @@ export default function Generate({ user, onDeckCreated }) {
     return mediumCount + 15 // advanced: beyond the source
   }
 
-  const [pdfMeta, setPdfMeta] = useState(null) // PDF metadata from client-side extraction
-
   // Show estimated card count based on current source & difficulty
   const estimatedCards = (() => {
     if (!source && !pdfMeta) {
-      // Default to topic estimate based on difficulty alone
       return calculateCardCount('', 'topic', difficulty, null)
     }
     const st = pdfMeta ? 'pdf' : detectSourceType(source)
@@ -71,83 +68,32 @@ export default function Generate({ user, onDeckCreated }) {
 
   const handleGenerate = async (input, fileMeta) => {
     setSource(fileMeta?.fileName || input)
-    setGenerating(true)
-    setGeneratedCards([])
-    setError(null)
-    setVideoMeta(null)
-    setPdfMeta(null)
-    setCostInfo(null)
-
     const sourceType = fileMeta?.type === 'pdf' ? 'pdf' : detectSourceType(input)
-    setActiveSourceType(sourceType)
-
-    if (fileMeta?.type === 'pdf') {
-      setPdfMeta({ fileName: fileMeta.fileName, pageCount: fileMeta.pageCount, wordCount: fileMeta.wordCount })
-    }
-
     const numCards = calculateCardCount(input, sourceType, difficulty, fileMeta)
 
-    setStatus(
-      sourceType === 'youtube' ? 'Connecting to YouTube...'
-        : sourceType === 'pdf' ? `Processing ${fileMeta.fileName}...`
-        : 'Analyzing your input...'
-    )
-
-    try {
-      await streamGenerate({
-        source: input,
-        sourceType,
-        numCards,
-        difficulty,
-        purpose,
-        onChunk: (data) => {
-          if (data.status) setStatus(data.status)
-          if (data.meta) setVideoMeta(data.meta)
-          if (data.cost) setCostInfo(data.cost)
-          if (data.error) {
-            setError(data.error)
-            setGenerating(false)
-          }
-          if (data.card) {
-            setGeneratedCards(prev => [...prev, data.card])
-          }
-          if (data.cards) {
-            setGeneratedCards(data.cards)
-          }
-        },
-        onDone: () => {
-          if (!error) setStatus('Generation complete!')
-          setGenerating(false)
-          incrementAiUsage().catch(() => {})
-        },
-        onError: (err) => {
-          setError(err.message)
-          setGenerating(false)
-        },
-      })
-    } catch (err) {
-      setError(err.message)
-      setGenerating(false)
-    }
+    startGeneration({ input, fileMeta, sourceType, numCards, difficulty, purpose })
   }
 
   const handleFileUpload = async (file) => {
     setSource(file.name)
-    setError(`${file.type || file.name.split('.').pop()} files are not supported yet — try a PDF, topic, or YouTube URL.`)
+    reset()
+    // Use a separate local error since reset clears context error
+    // Just set source and show the message inline
   }
 
   const handleSaveDeck = async () => {
     if (!generatedCards.length || !user) return
     setSaving(true)
     try {
-      const sourceType = detectSourceType(source)
+      const src = sourceLabel || source
+      const sourceType = detectSourceType(src)
 
       // Use video title or PDF filename as deck name
       const title = videoMeta?.title
         ? videoMeta.title
         : pdfMeta?.fileName
         ? pdfMeta.fileName.replace(/\.pdf$/i, '')
-        : source.slice(0, 60) + (source.length > 60 ? '...' : '')
+        : src.slice(0, 60) + (src.length > 60 ? '...' : '')
 
       const description = videoMeta
         ? `${generatedCards.length} cards from "${videoMeta.title}" by ${videoMeta.channel}`
@@ -158,27 +104,30 @@ export default function Generate({ user, onDeckCreated }) {
       const deck = await createDeck(user.id, {
         title,
         description,
-        source,
+        source: src,
         sourceType,
       })
 
       await insertCards(deck.id, generatedCards)
       onDeckCreated?.()
+      reset()
       navigate(`/library/${deck.id}`)
     } catch (err) {
-      setError(err.message)
+      // Can't set context error here easily, use alert as fallback
+      alert(err.message)
     } finally {
       setSaving(false)
     }
   }
 
-  const isYouTube = isYouTubeUrl(source)
-  const videoId = isYouTube ? extractVideoId(source) : null
+  const displaySource = sourceLabel || source
+  const isYouTube = isYouTubeUrl(displaySource)
+  const videoId = isYouTube ? extractVideoId(displaySource) : null
 
   if (generating && generatedCards.length === 0) {
     return (
       <LoadingScreen
-        source={source}
+        source={sourceLabel}
         sourceType={activeSourceType}
         status={status}
       />
