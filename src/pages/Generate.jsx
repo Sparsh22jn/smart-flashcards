@@ -112,20 +112,27 @@ export default function Generate({ user, onDeckCreated }) {
     setResumeLoading(true)
     setResumeError(null)
     try {
-      const [base64, textResult] = await Promise.all([
+      // base64 is required (sent to Claude); text extraction is optional (for preview metadata)
+      const [base64, textResult] = await Promise.allSettled([
         readFileAsBase64(file),
         extractPdfText(file),
       ])
+
+      if (base64.status === 'rejected') {
+        throw new Error('Could not read file')
+      }
+
+      const meta = textResult.status === 'fulfilled' ? textResult.value : null
       setResumePreview({
         fileName: file.name,
-        pageCount: textResult.pageCount,
-        wordCount: textResult.wordCount,
-        base64Data: base64,
+        pageCount: meta?.pageCount ?? '?',
+        wordCount: meta?.wordCount ?? 0,
+        base64Data: base64.value,
         mediaType: file.type || 'application/pdf',
       })
     } catch (err) {
       console.error('Resume upload error:', err)
-      setResumeError('Failed to read PDF. Please make sure it\'s a valid PDF file.')
+      setResumeError('Failed to read file. Please make sure it\'s a valid PDF.')
     } finally {
       setResumeLoading(false)
     }
@@ -338,7 +345,10 @@ export default function Generate({ user, onDeckCreated }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-on-surface text-sm truncate">{resumePreview.fileName}</p>
-                  <p className="text-xs text-on-surface-variant">{resumePreview.pageCount} page{resumePreview.pageCount !== 1 ? 's' : ''} · {resumePreview.wordCount.toLocaleString()} words</p>
+                  <p className="text-xs text-on-surface-variant">
+                    {resumePreview.pageCount !== '?' ? `${resumePreview.pageCount} page${resumePreview.pageCount !== 1 ? 's' : ''}` : 'PDF'}
+                    {resumePreview.wordCount > 0 ? ` · ${resumePreview.wordCount.toLocaleString()} words` : ''}
+                  </p>
                 </div>
                 <button
                   onClick={() => setResumePreview(null)}
