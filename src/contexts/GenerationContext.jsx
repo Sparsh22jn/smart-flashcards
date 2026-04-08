@@ -1,7 +1,9 @@
-import { createContext, useContext, useState, useCallback, useMemo } from 'react'
+import { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react'
 import { streamGenerate, incrementAiUsage } from '../lib/ai'
 
 const GenerationContext = createContext(null)
+
+const BATCH_SIZE = 12 // cards per edge-function call — fits well within timeout
 
 export function GenerationProvider({ children }) {
   const [generating, setGenerating] = useState(false)
@@ -13,8 +15,10 @@ export function GenerationProvider({ children }) {
   const [costInfo, setCostInfo] = useState(null)
   const [activeSourceType, setActiveSourceType] = useState(null)
   const [sourceLabel, setSourceLabel] = useState('')
+  const cancelledRef = useRef(false)
 
   const reset = useCallback(() => {
+    cancelledRef.current = true
     setGenerating(false)
     setGeneratedCards([])
     setStatus('')
@@ -27,6 +31,7 @@ export function GenerationProvider({ children }) {
   }, [])
 
   const startGeneration = useCallback(async ({ input, fileMeta, sourceType, numCards, difficulty, purpose, resumeFile, companyName, jobTitle, jobDescription }) => {
+    cancelledRef.current = false
     setGenerating(true)
     setGeneratedCards([])
     setError(null)
@@ -47,60 +52,110 @@ export function GenerationProvider({ children }) {
         : 'Analyzing your input...'
     )
 
+    const cardLabel = sourceType === 'interview' ? 'questions' : 'cards'
+    const allCards = []          // accumulator across batches
+    let totalInputTokens = 0
+    let totalOutputTokens = 0
+    let batchError = null
+
+    const totalBatches = Math.ceil(numCards / BATCH_SIZE)
+
     try {
-      await streamGenerate({
-        source: input,
-        sourceType,
-        numCards,
-        difficulty,
-        purpose,
-        resumeFile,
-        companyName,
-        jobTitle,
-        jobDescription,
-        onChunk: (data) => {
-          if (data.status) setStatus(data.status)
-          if (data.meta) setVideoMeta(data.meta)
-          if (data.cost) setCostInfo(data.cost)
-          if (data.error) {
-            setError(data.error)
-            setGenerating(false)
-          }
-          if (data.card) {
-            setGeneratedCards(prev => [...prev, data.card])
-          }
-          if (data.cards) {
-            setGeneratedCards(data.cards)
-          }
-        },
-        onDone: () => {
-          setGeneratedCards(prev => {
-            if (prev.length > 0) {
-              setStatus(`Generation complete! ${prev.length} ${sourceType === 'interview' ? 'questions' : 'cards'} ready.`)
-            } else {
-              setStatus('Generation complete!')
-            }
-            return prev
+      for (let batch = 0; batch < totalBatches; batch++) {
+        if (cancelledRef.current) break
+
+        const batchCount = Math.min(BATCH_SIZE, numCards - allCards.length)
+        const previousQuestions = allCards.map(c => c.front)
+
+        if (totalBatches > 1) {
+          setStatus(`Batch ${batch + 1}/${totalBatches} — generating ${cardLabel}...`)
+        }
+
+        await new Promise((resolve, reject) => {
+          streamGenerate({
+            source: input,
+            sourceType,
+            numCards: batchCount,
+            difficulty,
+            purpose,
+            resumeFile,
+            companyName,
+            jobTitle,
+            jobDescription,
+            previousQuestions: previousQuestions.length > 0 ? previousQuestions : undefined,
+            onChunk: (data) => {
+              if (cancelledRef.current) return
+              if (data.status) {
+                const prefix = totalBatches > 1 ? `[${batch + 1}/${totalBatches}] ` : ''
+                setStatus(prefix + data.status)
+              }
+              if (data.meta) setVideoMeta(data.meta)
+              if (data.cost) {
+                totalInputTokens += data.cost.inputTokens || 0
+                totalOutputTokens += data.cost.outputTokens || 0
+              }
+              if (data.error) {
+                batchError = data.error
+              }
+              if (data.card) {
+                allCards.push(data.card)
+                setGeneratedCards([...allCards])
+              }
+              if (data.cards) {
+                allCards.push(...data.cards)
+                setGeneratedCards([...allCards])
+              }
+            },
+            onDone: () => resolve(),
+            onError: (err) => {
+              // If we already have cards, don't reject — just stop batching
+              if (allCards.length > 0) {
+                batchError = err.message
+                resolve()
+              } else {
+                reject(err)
+              }
+            },
           })
-          setGenerating(false)
-          incrementAiUsage().catch(() => {})
-        },
-        onError: (err) => {
-          // If we already have some cards, don't lose them — just stop generating
-          setGeneratedCards(prev => {
-            if (prev.length > 0) {
-              setStatus(`Stream ended early — ${prev.length} ${sourceType === 'interview' ? 'questions' : 'cards'} recovered.`)
-              setGenerating(false)
-              return prev
-            }
-            setError(err.message)
-            setGenerating(false)
-            return prev
-          })
-        },
-      })
+        })
+
+        // Stop batching if this batch errored or produced no new cards
+        if (batchError) break
+      }
+
+      // Final state
+      const totalCost = (totalInputTokens / 1_000_000) * 3.0 + (totalOutputTokens / 1_000_000) * 15.0
+      if (totalInputTokens > 0) {
+        setCostInfo({
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          cost: Math.round(totalCost * 10000) / 10000,
+        })
+      }
+
+      if (allCards.length > 0) {
+        setGeneratedCards([...allCards])
+        setStatus(
+          batchError
+            ? `Partially complete — ${allCards.length} ${cardLabel} generated (batch error: ${batchError})`
+            : `Generation complete! ${allCards.length} ${cardLabel} ready.`
+        )
+      } else if (batchError) {
+        setError(batchError)
+      } else {
+        setStatus('Generation complete!')
+      }
+
+      setGenerating(false)
+      incrementAiUsage().catch(() => {})
+
     } catch (err) {
-      setError(err.message)
+      if (allCards.length > 0) {
+        setGeneratedCards([...allCards])
+        setStatus(`Partially complete — ${allCards.length} ${cardLabel} recovered.`)
+      } else {
+        setError(err.message)
+      }
       setGenerating(false)
     }
   }, [])

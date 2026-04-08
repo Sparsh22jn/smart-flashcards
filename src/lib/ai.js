@@ -16,7 +16,7 @@ async function getFreshToken() {
   return session.access_token
 }
 
-export async function streamGenerate({ source, sourceType, numCards, difficulty, purpose, resumeFile, companyName, jobTitle, jobDescription, onChunk, onDone, onError }) {
+export async function streamGenerate({ source, sourceType, numCards, difficulty, purpose, resumeFile, companyName, jobTitle, jobDescription, previousQuestions, onChunk, onDone, onError }) {
   const abort = new AbortController()
 
   try {
@@ -29,7 +29,7 @@ export async function streamGenerate({ source, sourceType, numCards, difficulty,
         'Authorization': `Bearer ${accessToken}`,
         'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
       },
-      body: JSON.stringify({ source, sourceType, numCards, difficulty, purpose, resumeFile, companyName, jobTitle, jobDescription }),
+      body: JSON.stringify({ source, sourceType, numCards, difficulty, purpose, resumeFile, companyName, jobTitle, jobDescription, previousQuestions }),
       signal: abort.signal,
     })
 

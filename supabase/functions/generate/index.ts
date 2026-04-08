@@ -137,7 +137,7 @@ Deno.serve(async (req: Request) => {
 
       const body = await req.json();
       const { source, sourceType, numCards = 10, difficulty = "medium", purpose = "general" } = body;
-      const { resumeFile, companyName, jobTitle, jobDescription } = body;
+      const { resumeFile, companyName, jobTitle, jobDescription, previousQuestions } = body;
 
       if (!source && sourceType !== "interview") { await fail("Source is required"); return; }
       if (sourceType === "interview" && !resumeFile?.data) { await fail("Resume file is required for interview prep"); return; }
@@ -158,7 +158,7 @@ Deno.serve(async (req: Request) => {
       if (sourceType === "interview") {
         // ── Interview Prep: Resume PDF + JD ────────────────────
         systemPrompt = INTERVIEW_SYSTEM_PROMPT;
-        maxTokens = numCards >= 25 ? 16384 : 8192;
+        maxTokens = 8192;
 
         await send({ status: "Analyzing your resume..." });
 
@@ -181,6 +181,10 @@ Deno.serve(async (req: Request) => {
         textPrompt += `DIFFICULTY: ${difficulty}\n${difficultyGuide}\n\n`;
         textPrompt += `Generate a balanced mix:\n- ~30% [Resume Deep-Dive] — probe specific projects, skills, and career decisions from the resume\n- ~30% [Technical] — technical questions matching resume skills${jobDescription ? " and JD requirements" : ""}\n- ~25% [Behavioral] — STAR-format questions on leadership, teamwork, problem-solving\n- ~15% [Culture Fit] — motivation, values, career trajectory\n\n`;
         textPrompt += `Make every question SPECIFIC to this candidate's actual background. Reference real projects, companies, skills, and experiences from the resume. Do NOT generate generic questions.`;
+
+        if (previousQuestions?.length > 0) {
+          textPrompt += `\n\nIMPORTANT — The following questions have ALREADY been generated in a previous batch. Do NOT repeat or rephrase any of them. Generate completely NEW and DIFFERENT questions:\n${previousQuestions.map((q: string, i: number) => `${i + 1}. ${q}`).join("\n")}`;
+        }
 
         // Build content array with document block + text
         messageContent = [
@@ -284,6 +288,11 @@ Deno.serve(async (req: Request) => {
           `Cover the most important concepts comprehensively. Match the depth and question style to what is typically considered ${difficulty} within this domain.`;
 
         await send({ status: "AI is generating your flashcards..." });
+      }
+
+      // ── Dedup: append previous questions for non-interview batched requests ──
+      if (previousQuestions?.length > 0 && sourceType !== "interview" && typeof messageContent === "string") {
+        messageContent += `\n\nIMPORTANT — The following cards have ALREADY been generated. Do NOT repeat or rephrase any of them. Generate completely NEW and DIFFERENT cards:\n${previousQuestions.map((q: string, i: number) => `${i + 1}. ${q}`).join("\n")}`;
       }
 
       // ── Call Claude (streaming) ─────────────────────────────────
