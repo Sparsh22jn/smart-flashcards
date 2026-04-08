@@ -4,18 +4,29 @@ import { supabase } from './supabase'
  * Stream flashcard generation from Claude via Edge Function.
  * Same SSE pattern as IronLog's chat streaming.
  */
+async function getFreshToken() {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('Not authenticated')
+  // If token expires within 60s, force a refresh
+  if (session.expires_at && Date.now() / 1000 > session.expires_at - 60) {
+    const { data, error } = await supabase.auth.refreshSession()
+    if (error || !data.session) throw new Error('Session expired — please sign in again')
+    return data.session.access_token
+  }
+  return session.access_token
+}
+
 export async function streamGenerate({ source, sourceType, numCards, difficulty, purpose, resumeFile, companyName, jobTitle, jobDescription, onChunk, onDone, onError }) {
   const abort = new AbortController()
 
   try {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) throw new Error('Not authenticated')
+    const accessToken = await getFreshToken()
 
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session.access_token}`,
+        'Authorization': `Bearer ${accessToken}`,
         'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
       },
       body: JSON.stringify({ source, sourceType, numCards, difficulty, purpose, resumeFile, companyName, jobTitle, jobDescription }),
@@ -69,14 +80,13 @@ export async function streamChat({ message, conversation, cardContext, onChunk, 
   const abort = new AbortController()
 
   try {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) throw new Error('Not authenticated')
+    const accessToken = await getFreshToken()
 
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session.access_token}`,
+        'Authorization': `Bearer ${accessToken}`,
         'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
       },
       body: JSON.stringify({ message, conversation, cardContext }),
