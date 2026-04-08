@@ -74,13 +74,29 @@ export function GenerationProvider({ children }) {
           }
         },
         onDone: () => {
-          setStatus('Generation complete!')
+          setGeneratedCards(prev => {
+            if (prev.length > 0) {
+              setStatus(`Generation complete! ${prev.length} ${sourceType === 'interview' ? 'questions' : 'cards'} ready.`)
+            } else {
+              setStatus('Generation complete!')
+            }
+            return prev
+          })
           setGenerating(false)
           incrementAiUsage().catch(() => {})
         },
         onError: (err) => {
-          setError(err.message)
-          setGenerating(false)
+          // If we already have some cards, don't lose them — just stop generating
+          setGeneratedCards(prev => {
+            if (prev.length > 0) {
+              setStatus(`Stream ended early — ${prev.length} ${sourceType === 'interview' ? 'questions' : 'cards'} recovered.`)
+              setGenerating(false)
+              return prev
+            }
+            setError(err.message)
+            setGenerating(false)
+            return prev
+          })
         },
       })
     } catch (err) {

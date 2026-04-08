@@ -214,12 +214,13 @@ export default function Generate({ user, onDeckCreated }) {
   const isYouTube = isYouTubeUrl(displaySource)
   const videoId = isYouTube ? extractVideoId(displaySource) : null
 
-  if (generating && generatedCards.length === 0) {
+  if (generating) {
     return (
       <LoadingScreen
         source={sourceLabel}
         sourceType={activeSourceType}
         status={status}
+        cardCount={generatedCards.length}
       />
     )
   }

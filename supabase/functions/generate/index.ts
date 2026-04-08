@@ -309,7 +309,7 @@ Deno.serve(async (req: Request) => {
         return;
       }
 
-      // Read Claude's SSE stream, accumulate text, send heartbeats to client
+      // Read Claude's SSE stream, parse and send each card incrementally
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
       let sseBuffer = "";
@@ -318,6 +318,66 @@ Deno.serve(async (req: Request) => {
       let outputTokens = 0;
       let cardsSentSoFar = 0;
       const cardLabel = sourceType === "interview" ? "questions" : "cards";
+
+      function normalizeCard(c: any, idx: number): any {
+        return {
+          front: c.front || `Question ${idx + 1}`,
+          back: c.back || "No answer provided",
+          explanation: c.explanation || null,
+          mnemonic: c.mnemonic || null,
+          difficulty: ["easy", "medium", "hard"].includes(c.difficulty) ? c.difficulty : difficulty,
+        };
+      }
+
+      // Try to extract complete card JSON objects from accumulated text
+      // and send them to the client as they arrive
+      async function tryExtractAndSendCards() {
+        const arrayStart = accumulatedText.indexOf("[");
+        if (arrayStart === -1) return;
+
+        const jsonContent = accumulatedText.slice(arrayStart);
+
+        // Find complete card objects: match each {...} block
+        // We look for top-level objects within the array by tracking brace depth
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+        let objStart = -1;
+        const completeObjects: string[] = [];
+
+        for (let i = 0; i < jsonContent.length; i++) {
+          const ch = jsonContent[i];
+
+          if (escape) { escape = false; continue; }
+          if (ch === "\\") { escape = true; continue; }
+          if (ch === '"') { inString = !inString; continue; }
+          if (inString) continue;
+
+          if (ch === "{") {
+            if (depth === 0) objStart = i;
+            depth++;
+          } else if (ch === "}") {
+            depth--;
+            if (depth === 0 && objStart !== -1) {
+              completeObjects.push(jsonContent.slice(objStart, i + 1));
+              objStart = -1;
+            }
+          }
+        }
+
+        // Send any new complete cards
+        for (let i = cardsSentSoFar; i < completeObjects.length; i++) {
+          try {
+            const parsed = JSON.parse(completeObjects[i]);
+            const card = normalizeCard(parsed, i);
+            await send({
+              card,
+              status: `Generating ${cardLabel}... (${i + 1} so far)`,
+            });
+            cardsSentSoFar = i + 1;
+          } catch { /* incomplete or malformed — skip for now */ }
+        }
+      }
 
       while (true) {
         const { done, value } = await reader.read();
@@ -342,23 +402,7 @@ Deno.serve(async (req: Request) => {
 
             if (event.type === "content_block_delta" && event.delta?.text) {
               accumulatedText += event.delta.text;
-
-              // Try to extract and stream complete cards as they arrive
-              try {
-                const partialMatch = accumulatedText.match(/\[[\s\S]*/);
-                if (partialMatch) {
-                  // Count complete card objects by matching closing braces followed by comma or ]
-                  const completeCards = (partialMatch[0].match(/\}[\s,]*(?=\{|\])/g) || []).length;
-                  // Also count if the last card is complete (ends with }])
-                  const endsComplete = /\}\s*\]\s*$/.test(partialMatch[0]);
-                  const totalComplete = endsComplete ? completeCards + 1 : completeCards;
-
-                  if (totalComplete > cardsSentSoFar) {
-                    await send({ status: `Generating ${cardLabel}... (${totalComplete} so far)` });
-                    cardsSentSoFar = totalComplete;
-                  }
-                }
-              } catch { /* partial parse — ignore */ }
+              await tryExtractAndSendCards();
             }
 
             if (event.type === "message_delta" && event.usage) {
@@ -368,41 +412,13 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      const text = accumulatedText;
+      // Final pass: extract any remaining cards not yet sent
+      await tryExtractAndSendCards();
 
-      // ── Parse response ───────────────────────────────────────────
-      let cards;
-      try {
-        cards = JSON.parse(text);
-      } catch {
-        const match = text.match(/\[[\s\S]*\]/);
-        if (match) {
-          try {
-            cards = JSON.parse(match[0]);
-          } catch {
-            await fail("Failed to parse generated cards from Claude response.");
-            return;
-          }
-        } else {
-          await fail("Failed to parse generated cards from Claude response.");
-          return;
-        }
-      }
-
-      // Validate cards
-      if (!Array.isArray(cards) || cards.length === 0) {
+      if (cardsSentSoFar === 0) {
         await fail("Claude returned no valid flashcards.");
         return;
       }
-
-      // Ensure all required fields
-      cards = cards.map((c: any, i: number) => ({
-        front: c.front || `Question ${i + 1}`,
-        back: c.back || "No answer provided",
-        explanation: c.explanation || null,
-        mnemonic: c.mnemonic || null,
-        difficulty: ["easy", "medium", "hard"].includes(c.difficulty) ? c.difficulty : difficulty,
-      }));
 
       // ── Track cost ───────────────────────────────────────────────
       const cost = (inputTokens / 1_000_000) * 3.0 + (outputTokens / 1_000_000) * 15.0;
@@ -416,10 +432,9 @@ Deno.serve(async (req: Request) => {
         });
       } catch {} // non-critical
 
-      // ── Send results ─────────────────────────────────────────────
+      // ── Send final status ──────────────────────────────────────
       await send({
-        status: `Generated ${cards.length} ${cardLabel}!`,
-        cards,
+        status: `Generated ${cardsSentSoFar} ${cardLabel}!`,
         meta: videoMeta,
         cost: {
           inputTokens,
