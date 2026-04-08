@@ -1,6 +1,7 @@
 // Smart FlashCards — Generate Edge Function
 // Accepts a source (topic, YouTube URL, text, etc.) and generates flashcards via Claude.
 // YouTube URLs are auto-detected: transcript is extracted server-side, then fed to Claude.
+// Interview Prep mode: receives resume PDF + JD and generates targeted interview questions.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.99.1";
 import { fetchYouTubeTranscript, extractVideoId, chunkTranscript } from "./youtube.ts";
@@ -55,6 +56,44 @@ Return a JSON array of flashcard objects. Each object:
 
 Return ONLY the JSON array, no markdown code fences, no extra text.`;
 
+const INTERVIEW_SYSTEM_PROMPT = `You are a senior hiring manager and career coach with deep expertise in interview preparation. Your job is to generate realistic, targeted interview questions based on a candidate's resume and (optionally) a specific job description.
+
+QUESTION CATEGORIES — prefix every question with its category tag:
+- [Resume Deep-Dive]: Questions about specific projects, achievements, career transitions, or skills from the resume. Examples: "Walk me through your work on...", "I see you used X at Y company — tell me about that decision", "What was the biggest challenge in your role at...?"
+- [Technical]: Domain-specific technical questions testing depth of knowledge. Should relate to skills on the resume and/or requirements in the JD. Examples: "Explain how you would...", "What's the trade-off between X and Y?", "Design a system that..."
+- [Behavioral]: STAR-format questions targeting competencies the role requires. Examples: "Tell me about a time you had to...", "Describe a situation where...", "Give me an example of..."
+- [Culture Fit]: Questions about motivation, values, career goals, and working style. Examples: "Why are you interested in this role?", "How do you handle disagreements with teammates?", "Where do you see yourself in 3 years?"
+
+ANSWER SCAFFOLDING — For each question, provide a model answer:
+- Behavioral → Use STAR format: Situation (set the scene) → Task (your responsibility) → Action (what you specifically did) → Result (measurable outcome)
+- Technical → Clear explanation hitting key concepts, trade-offs, and practical considerations
+- Resume Deep-Dive → Structured talking points highlighting impact, challenges overcome, and lessons learned
+- Culture Fit → Authentic response that connects personal values to the role/company
+
+CARD FORMAT:
+{
+  "front": "[Category] The interview question",
+  "back": "Model answer with structured talking points the candidate should cover",
+  "explanation": "What the interviewer is actually evaluating with this question — the hidden agenda",
+  "mnemonic": "Key points checklist: 1) ... 2) ... 3) ...",
+  "difficulty": "easy|medium|hard"
+}
+
+QUALITY RULES:
+1. Every question MUST be specific to THIS candidate's resume — never generic
+2. If a job description is provided, tailor questions to match the role requirements and company context
+3. Answers should be comprehensive but concise — what a strong, well-prepared candidate would say
+4. Explanations reveal what the interviewer is really testing (leadership? technical depth? self-awareness?)
+5. Mnemonics are quick-reference bullet checklists of must-mention points
+6. Mix approximately: 30% Resume Deep-Dive, 30% Technical, 25% Behavioral, 15% Culture Fit
+
+DIFFICULTY LEVELS:
+- Easy: Standard expected questions any candidate should prepare for
+- Medium: Probing follow-up questions that dig deeper into specific experiences and technical details
+- Hard: Challenging curveball questions, stress-test scenarios, "what if" hypotheticals, questions exposing gaps
+
+Return ONLY the JSON array, no markdown code fences, no extra text.`;
+
 function sseEvent(data: any): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
@@ -96,21 +135,71 @@ Deno.serve(async (req: Request) => {
       const { data: { user }, error: authError } = await supabase.auth.getUser(token);
       if (authError || !user) { await fail("Invalid token"); return; }
 
-      const { source, sourceType, numCards = 10, difficulty = "medium", purpose = "general" } = await req.json();
-      if (!source) { await fail("Source is required"); return; }
+      const body = await req.json();
+      const { source, sourceType, numCards = 10, difficulty = "medium", purpose = "general" } = body;
+      const { resumeFile, companyName, jobTitle, jobDescription } = body;
 
-      // ── Purpose guide ────────────────────────────────────────────
+      if (!source && sourceType !== "interview") { await fail("Source is required"); return; }
+      if (sourceType === "interview" && !resumeFile?.data) { await fail("Resume file is required for interview prep"); return; }
+
+      // ── Purpose guide (for non-interview modes) ────────────────
       const purposeGuide = purpose === "interview"
         ? `\nPURPOSE: Interview Prep\nFrame every question the way an interviewer would ask it. Use formats like "Explain…", "Walk me through…", "How would you approach…", "What's the difference between X and Y?", "Tell me about a time…" (for behavioral questions). Structure answers using STAR format for behavioral and clear technical explanations for technical. Include a likely follow-up probe an interviewer might ask. Mnemonics should help remember key talking points.\n`
         : purpose === "exam"
         ? `\nPURPOSE: Exam Prep\nFrame every question in formal exam style: MCQ stems, short-answer, or case-based prompts. Include distractor reasoning where applicable. Answers must cite mechanisms, rules, or principles explicitly.\n`
         : "";
 
-      // ── YouTube: Extract transcript ──────────────────────────────
-      let userMessage = "";
+      // ── Build Claude message content ───────────────────────────
+      let messageContent: any;
+      let systemPrompt: string;
+      let maxTokens = 8192;
       let videoMeta: any = null;
 
-      if (sourceType === "youtube" || extractVideoId(source)) {
+      if (sourceType === "interview") {
+        // ── Interview Prep: Resume PDF + JD ────────────────────
+        systemPrompt = INTERVIEW_SYSTEM_PROMPT;
+        maxTokens = numCards >= 25 ? 16384 : 8192;
+
+        await send({ status: "Analyzing your resume..." });
+
+        const difficultyGuide = difficulty === "easy"
+          ? "Easy: Standard expected questions any candidate should prepare for."
+          : difficulty === "medium"
+          ? "Medium: Probing follow-up questions that dig deeper into specific experiences and technical details."
+          : "Advanced: Challenging curveball questions, stress-test scenarios, hypotheticals, and questions that probe gaps or weaknesses.";
+
+        let textPrompt = `Generate exactly ${numCards} realistic interview questions based on the attached resume.\n\n`;
+
+        if (companyName || jobTitle) {
+          textPrompt += `TARGET ROLE: ${[jobTitle, companyName].filter(Boolean).join(" at ")}\n\n`;
+        }
+
+        if (jobDescription) {
+          textPrompt += `JOB DESCRIPTION:\n${jobDescription}\n\n`;
+        }
+
+        textPrompt += `DIFFICULTY: ${difficulty}\n${difficultyGuide}\n\n`;
+        textPrompt += `Generate a balanced mix:\n- ~30% [Resume Deep-Dive] — probe specific projects, skills, and career decisions from the resume\n- ~30% [Technical] — technical questions matching resume skills${jobDescription ? " and JD requirements" : ""}\n- ~25% [Behavioral] — STAR-format questions on leadership, teamwork, problem-solving\n- ~15% [Culture Fit] — motivation, values, career trajectory\n\n`;
+        textPrompt += `Make every question SPECIFIC to this candidate's actual background. Reference real projects, companies, skills, and experiences from the resume. Do NOT generate generic questions.`;
+
+        // Build content array with document block + text
+        messageContent = [
+          {
+            type: "document",
+            source: {
+              type: "base64",
+              media_type: resumeFile.mediaType || "application/pdf",
+              data: resumeFile.data,
+            },
+          },
+          { type: "text", text: textPrompt },
+        ];
+
+        await send({ status: "AI is generating interview questions..." });
+
+      } else if (sourceType === "youtube" || extractVideoId(source)) {
+        // ── YouTube: Extract transcript ──────────────────────────
+        systemPrompt = SYSTEM_PROMPT;
         await send({ status: "Detecting YouTube video..." });
 
         try {
@@ -143,7 +232,7 @@ Deno.serve(async (req: Request) => {
             ? "Medium: application, clinical/practical vignettes, 'why' and 'how' questions, compare-and-contrast."
             : "Advanced: synthesis, differential diagnosis, edge cases, multi-step reasoning, exam-style questions. Go BEYOND the transcript — add related concepts, edge cases, and exam-relevant cards not explicitly stated in the source.";
 
-          userMessage =
+          messageContent =
             `Generate exactly ${numCards} flashcards from this YouTube video transcript.\n\n` +
             `DIFFICULTY: ${difficulty}\n${difficultyGuide}\n` +
             purposeGuide + `\n` +
@@ -153,6 +242,8 @@ Deno.serve(async (req: Request) => {
             `Focus on the key concepts, facts, and insights discussed in the video. ` +
             `Create flashcards that test deep understanding, not trivia or surface details.`;
 
+          await send({ status: "AI is generating your flashcards..." });
+
         } catch (err) {
           await fail(`YouTube error: ${err.message}`);
           return;
@@ -160,6 +251,7 @@ Deno.serve(async (req: Request) => {
 
       } else if (sourceType === "paste" || sourceType === "pdf" || sourceType === "document") {
         // ── Text content ──────────────────────────────────────────
+        systemPrompt = SYSTEM_PROMPT;
         await send({ status: "Processing your content..." });
         const pasteDiffGuide = difficulty === "easy"
           ? "Easy: definitions, core mechanisms, foundational 'what is' questions. Stay within the source material."
@@ -167,14 +259,17 @@ Deno.serve(async (req: Request) => {
           ? "Medium: application, clinical/practical vignettes, 'why' and 'how' questions, compare-and-contrast. Stay within the source material."
           : "Advanced: synthesis, differential diagnosis, edge cases, multi-step reasoning, exam-style questions. Generate cards from the content AND additional cards on related concepts, edge cases, and exam-relevant material NOT in the source.";
 
-        userMessage =
+        messageContent =
           `Generate exactly ${numCards} flashcards from the following content.\n\n` +
           `DIFFICULTY: ${difficulty}\n${pasteDiffGuide}\n` +
           purposeGuide + `\n` +
           `CONTENT:\n${source}`;
 
+        await send({ status: "AI is generating your flashcards..." });
+
       } else {
         // ── Topic ─────────────────────────────────────────────────
+        systemPrompt = SYSTEM_PROMPT;
         await send({ status: `Generating cards about "${source}"...` });
         const topicDiffGuide = difficulty === "easy"
           ? "Easy: definitions, core mechanisms, foundational 'what is' questions."
@@ -182,16 +277,16 @@ Deno.serve(async (req: Request) => {
           ? "Medium: application, clinical/practical vignettes, 'why' and 'how' questions, compare-and-contrast."
           : "Advanced: synthesis, differential diagnosis, edge cases, multi-step reasoning, exam-style questions with distractors, questions requiring integration of multiple concepts.";
 
-        userMessage =
+        messageContent =
           `Generate exactly ${numCards} flashcards about: ${source}\n\n` +
           `DIFFICULTY: ${difficulty}\n${topicDiffGuide}\n` +
           purposeGuide + `\n` +
           `Cover the most important concepts comprehensively. Match the depth and question style to what is typically considered ${difficulty} within this domain.`;
+
+        await send({ status: "AI is generating your flashcards..." });
       }
 
       // ── Call Claude (streaming) ─────────────────────────────────
-      await send({ status: "AI is generating your flashcards..." });
-
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -201,10 +296,10 @@ Deno.serve(async (req: Request) => {
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 8192,
+          max_tokens: maxTokens,
           stream: true,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: userMessage }],
+          system: systemPrompt,
+          messages: [{ role: "user", content: messageContent }],
         }),
       });
 
@@ -222,6 +317,7 @@ Deno.serve(async (req: Request) => {
       let inputTokens = 0;
       let outputTokens = 0;
       let cardsSentSoFar = 0;
+      const cardLabel = sourceType === "interview" ? "questions" : "cards";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -258,7 +354,7 @@ Deno.serve(async (req: Request) => {
                   const totalComplete = endsComplete ? completeCards + 1 : completeCards;
 
                   if (totalComplete > cardsSentSoFar) {
-                    await send({ status: `Generating cards... (${totalComplete} so far)` });
+                    await send({ status: `Generating ${cardLabel}... (${totalComplete} so far)` });
                     cardsSentSoFar = totalComplete;
                   }
                 }
@@ -322,7 +418,7 @@ Deno.serve(async (req: Request) => {
 
       // ── Send results ─────────────────────────────────────────────
       await send({
-        status: `Generated ${cards.length} flashcards!`,
+        status: `Generated ${cards.length} ${cardLabel}!`,
         cards,
         meta: videoMeta,
         cost: {

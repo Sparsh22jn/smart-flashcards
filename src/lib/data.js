@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { State, createNewCard, migrateFromSM2 } from '../core/fsrs'
 
 // ── Decks ────────────────────────────────────────────────────────────
 
@@ -10,6 +11,16 @@ export async function fetchDecks(userId) {
     .order('updated_at', { ascending: false })
   if (error) throw error
   return data.map(mapDeck)
+}
+
+export async function fetchDeck(deckId) {
+  const { data, error } = await supabase
+    .from('decks')
+    .select('*')
+    .eq('id', deckId)
+    .single()
+  if (error) throw error
+  return mapDeck(data)
 }
 
 export async function createDeck(userId, { title, description, source, sourceType }) {
@@ -122,6 +133,113 @@ export async function fetchDeckProgress(userId) {
   return progress
 }
 
+// ── Study Queue (Anki-style) ─────────────────────────────────────────
+
+export async function fetchStudyQueue(userId, deckId) {
+  // 1. Fetch deck with settings
+  const { data: deckData, error: deckErr } = await supabase
+    .from('decks')
+    .select('*')
+    .eq('id', deckId)
+    .single()
+  if (deckErr) throw deckErr
+  const deck = mapDeck(deckData)
+
+  const deckSettings = {
+    newCardsPerDay: deck.newCardsPerDay,
+    reviewCardsPerDay: deck.reviewCardsPerDay,
+    desiredRetention: deck.desiredRetention,
+  }
+
+  // 2. Fetch all non-suspended cards
+  const { data: cardsData, error: cardsErr } = await supabase
+    .from('cards')
+    .select('*')
+    .eq('deck_id', deckId)
+    .eq('is_suspended', false)
+    .order('position', { ascending: true })
+  if (cardsErr) throw cardsErr
+  const cards = cardsData.map(mapCard)
+
+  if (cards.length === 0) {
+    return {
+      learning: [], review: [], new: [],
+      counts: { learning: 0, review: 0, new: 0, total: 0 },
+      progressMap: {}, deckSettings, totalCards: 0,
+    }
+  }
+
+  // 3. Fetch card_progress via join on deck
+  const { data: progressData, error: progErr } = await supabase
+    .from('card_progress')
+    .select('*, cards!inner(deck_id)')
+    .eq('user_id', userId)
+    .eq('cards.deck_id', deckId)
+  if (progErr) throw progErr
+
+  const progressMap = {}
+  for (const row of progressData) {
+    progressMap[row.card_id] = mapProgress(row)
+  }
+
+  // 4. Count new cards already introduced today (from review_log)
+  const todayStart = new Date()
+  todayStart.setHours(0, 0, 0, 0)
+
+  const { count: newCardsToday, error: countErr } = await supabase
+    .from('review_log')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('deck_id', deckId)
+    .eq('state_before', 0)
+    .gte('reviewed_at', todayStart.toISOString())
+
+  const newIntroducedToday = countErr ? 0 : (newCardsToday || 0)
+
+  // 5. Categorize cards
+  const now = new Date()
+  const learning = []
+  const review = []
+  const newCards = []
+
+  for (const card of cards) {
+    const prog = progressMap[card.id]
+    if (!prog) {
+      newCards.push({ card, progress: createNewCard(), category: 'new' })
+    } else if (prog.state === State.New && prog.reps === 0) {
+      newCards.push({ card, progress: prog, category: 'new' })
+    } else if (prog.state === State.Learning || prog.state === State.Relearning) {
+      if (new Date(prog.nextReview) <= now) {
+        learning.push({ card, progress: prog, category: 'learning' })
+      }
+    } else if (prog.state === State.Review) {
+      if (new Date(prog.nextReview) <= now) {
+        review.push({ card, progress: prog, category: 'review' })
+      }
+    }
+  }
+
+  // 6. Apply daily limits
+  const newLimit = Math.max(0, deckSettings.newCardsPerDay - newIntroducedToday)
+  const limitedNew = newCards.slice(0, newLimit)
+  const limitedReview = review.slice(0, deckSettings.reviewCardsPerDay)
+
+  return {
+    learning,
+    review: limitedReview,
+    new: limitedNew,
+    counts: {
+      learning: learning.length,
+      review: limitedReview.length,
+      new: limitedNew.length,
+      total: learning.length + limitedReview.length + limitedNew.length,
+    },
+    progressMap,
+    deckSettings,
+    totalCards: cards.length,
+  }
+}
+
 // ── Study Progress (Spaced Repetition) ───────────────────────────────
 
 export async function fetchDueCards(userId) {
@@ -145,7 +263,16 @@ export async function upsertCardProgress(userId, cardId, review) {
       interval_days: review.intervalDays,
       repetitions: review.repetitions,
       next_review: review.nextReview,
-      last_reviewed: new Date().toISOString(),
+      last_reviewed: review.lastReviewed || new Date().toISOString(),
+      state: review.state ?? 0,
+      stability: review.stability ?? null,
+      difficulty: review.difficulty ?? null,
+      scheduled_days: review.scheduledDays ?? 0,
+      elapsed_days: review.elapsedDays ?? 0,
+      reps: review.reps ?? 0,
+      lapses: review.lapses ?? 0,
+      last_rating: review.lastRating ?? null,
+      is_leech: review.isLeech ?? false,
     }, { onConflict: 'user_id,card_id' })
     .select()
     .single()
@@ -155,7 +282,12 @@ export async function upsertCardProgress(userId, cardId, review) {
 
 // ── Study Sessions ───────────────────────────────────────────────────
 
-export async function insertStudySession(userId, { deckId, cardsStudied, correctCount, duration }) {
+export async function insertStudySession(userId, {
+  deckId, cardsStudied, correctCount, duration,
+  newCount, reviewCount, relearnCount,
+  againCount, hardCount, goodCount, easyCount,
+  averageTimePerCardMs, mode,
+}) {
   const { data, error } = await supabase
     .from('study_sessions')
     .insert({
@@ -164,6 +296,15 @@ export async function insertStudySession(userId, { deckId, cardsStudied, correct
       cards_studied: cardsStudied,
       correct_count: correctCount,
       duration_seconds: duration,
+      new_count: newCount ?? 0,
+      review_count: reviewCount ?? 0,
+      relearn_count: relearnCount ?? 0,
+      again_count: againCount ?? 0,
+      hard_count: hardCount ?? 0,
+      good_count: goodCount ?? 0,
+      easy_count: easyCount ?? 0,
+      average_time_per_card_ms: averageTimePerCardMs ?? null,
+      mode: mode ?? 'normal',
     })
     .select()
     .single()
@@ -265,6 +406,10 @@ function mapDeck(d) {
     source: d.source,
     sourceType: d.source_type,
     cardCount: d.card_count,
+    newCardsPerDay: d.new_cards_per_day ?? 20,
+    reviewCardsPerDay: d.review_cards_per_day ?? 200,
+    desiredRetention: d.desired_retention ?? 0.9,
+    fsrsWeights: d.fsrs_weights,
     createdAt: d.created_at,
     updatedAt: d.updated_at,
   }
@@ -283,4 +428,24 @@ function mapCard(c) {
     createdAt: c.created_at,
     updatedAt: c.updated_at,
   }
+}
+
+export function mapProgress(row) {
+  const progress = {
+    easeFactor: row.ease_factor ?? 2.5,
+    intervalDays: row.interval_days ?? 0,
+    repetitions: row.repetitions ?? 0,
+    nextReview: row.next_review,
+    lastReviewed: row.last_reviewed,
+    state: row.state ?? 0,
+    stability: row.stability,
+    difficulty: row.difficulty,
+    scheduledDays: row.scheduled_days ?? 0,
+    elapsedDays: row.elapsed_days ?? 0,
+    reps: row.reps ?? 0,
+    lapses: row.lapses ?? 0,
+    lastRating: row.last_rating,
+    isLeech: row.is_leech ?? false,
+  }
+  return migrateFromSM2(progress)
 }

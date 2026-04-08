@@ -20,7 +20,6 @@ export default function App() {
   const [studySessions, setStudySessions] = useState([])
   const [costTracker, setCostTracker] = useState(null)
   const [deckProgress, setDeckProgress] = useState({})
-  const [cardProgressMap, setCardProgressMap] = useState({})
   const [userProfile, setUserProfile] = useState(null)
   const [streak, setStreak] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -58,10 +57,6 @@ export default function App() {
     if (!user) return
     fetchDecks(user.id).then(setDecks).catch(console.error)
   }, [user])
-
-  const handleProgressUpdate = useCallback((cardId, progress) => {
-    setCardProgressMap(prev => ({ ...prev, [cardId]: progress }))
-  }, [])
 
   // Auth gate
   if (!authChecked) {
@@ -105,13 +100,7 @@ export default function App() {
         />
         <Route
           path="/study/:deckId"
-          element={
-            <Study
-              user={user}
-              cardProgressMap={cardProgressMap}
-              onProgressUpdate={handleProgressUpdate}
-            />
-          }
+          element={<Study user={user} />}
         />
         <Route
           path="/progress"

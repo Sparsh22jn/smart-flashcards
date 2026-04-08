@@ -5,8 +5,8 @@ import { previewIntervals, intervalLabel } from '../core/fsrs'
  * Spaced repetition rating interface.
  * Based on Study.html Stitch design — 4-button rating grid.
  */
-export default function RatingButtons({ cardProgress, onRate }) {
-  const previews = previewIntervals(cardProgress)
+export default function RatingButtons({ cardProgress, onRate, deckSettings }) {
+  const previews = previewIntervals(cardProgress, deckSettings)
 
   const buttons = [
     { rating: 1, interval: previews.again },

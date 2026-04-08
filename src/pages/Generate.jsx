@@ -1,14 +1,24 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import InputBar from '../components/InputBar'
 import { createDeck, insertCards } from '../lib/data'
 import { isYouTubeUrl, extractVideoId, getThumbnailUrl } from '../lib/youtube'
+import { extractPdfText } from '../lib/pdf'
 import LoadingScreen from '../components/LoadingScreen'
 import { useGeneration } from '../contexts/GenerationContext'
 
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result.split(',')[1])
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 /**
  * Generate page — create flashcards from any source.
- * Full YouTube pipeline: URL → transcript extraction → Claude → flashcards.
+ * Includes Interview Prep mode: upload resume + JD to generate targeted interview questions.
  */
 export default function Generate({ user, onDeckCreated }) {
   const location = useLocation()
@@ -24,6 +34,18 @@ export default function Generate({ user, onDeckCreated }) {
   const [purpose, setPurpose] = useState('general')
   const [source, setSource] = useState(location.state?.topic || '')
   const [saving, setSaving] = useState(false)
+
+  // Interview Prep state
+  const [resumePreview, setResumePreview] = useState(null)
+  const [resumeLoading, setResumeLoading] = useState(false)
+  const [resumeError, setResumeError] = useState(null)
+  const [companyName, setCompanyName] = useState('')
+  const [jobTitle, setJobTitle] = useState('')
+  const [jobDescription, setJobDescription] = useState('')
+  const [questionCount, setQuestionCount] = useState(25)
+  const resumeFileRef = useRef(null)
+
+  const isInterview = purpose === 'interview'
 
   const difficultyOptions = [
     { value: 'easy', label: 'Easy' },
@@ -59,6 +81,7 @@ export default function Generate({ user, onDeckCreated }) {
 
   // Show estimated card count based on current source & difficulty
   const estimatedCards = (() => {
+    if (isInterview) return questionCount
     if (!source && !pdfMeta) {
       return calculateCardCount('', 'topic', difficulty, null)
     }
@@ -66,6 +89,7 @@ export default function Generate({ user, onDeckCreated }) {
     return calculateCardCount(source, st, difficulty, pdfMeta)
   })()
 
+  // ── Standard generation handler ───────────────────────────────────
   const handleGenerate = async (input, fileMeta) => {
     setSource(fileMeta?.fileName || input)
     const sourceType = fileMeta?.type === 'pdf' ? 'pdf' : detectSourceType(input)
@@ -77,29 +101,89 @@ export default function Generate({ user, onDeckCreated }) {
   const handleFileUpload = async (file) => {
     setSource(file.name)
     reset()
-    // Use a separate local error since reset clears context error
-    // Just set source and show the message inline
   }
 
+  // ── Interview Prep handlers ───────────────────────────────────────
+  const handleResumeUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+
+    setResumeLoading(true)
+    setResumeError(null)
+    try {
+      const [base64, textResult] = await Promise.all([
+        readFileAsBase64(file),
+        extractPdfText(file),
+      ])
+      setResumePreview({
+        fileName: file.name,
+        pageCount: textResult.pageCount,
+        wordCount: textResult.wordCount,
+        base64Data: base64,
+        mediaType: file.type || 'application/pdf',
+      })
+    } catch (err) {
+      console.error('Resume upload error:', err)
+      setResumeError('Failed to read PDF. Please make sure it\'s a valid PDF file.')
+    } finally {
+      setResumeLoading(false)
+    }
+  }
+
+  const handleInterviewGenerate = () => {
+    if (!resumePreview) return
+
+    setSource(resumePreview.fileName)
+    startGeneration({
+      input: resumePreview.fileName,
+      sourceType: 'interview',
+      numCards: questionCount,
+      difficulty,
+      purpose: 'interview',
+      resumeFile: {
+        data: resumePreview.base64Data,
+        mediaType: resumePreview.mediaType,
+        fileName: resumePreview.fileName,
+      },
+      companyName: companyName.trim() || null,
+      jobTitle: jobTitle.trim() || null,
+      jobDescription: jobDescription.trim() || null,
+    })
+  }
+
+  // ── Save deck ─────────────────────────────────────────────────────
   const handleSaveDeck = async () => {
     if (!generatedCards.length || !user) return
     setSaving(true)
     try {
       const src = sourceLabel || source
-      const sourceType = detectSourceType(src)
+      let title, description, sourceType
 
-      // Use video title or PDF filename as deck name
-      const title = videoMeta?.title
-        ? videoMeta.title
-        : pdfMeta?.fileName
-        ? pdfMeta.fileName.replace(/\.pdf$/i, '')
-        : src.slice(0, 60) + (src.length > 60 ? '...' : '')
+      if (isInterview || activeSourceType === 'interview') {
+        // Auto-name: "Interview Prep: Google - Senior Data Scientist"
+        const co = companyName.trim()
+        const jt = jobTitle.trim()
+        title = co && jt ? `Interview Prep: ${co} - ${jt}`
+          : co ? `Interview Prep: ${co}`
+          : jt ? `Interview Prep: ${jt}`
+          : 'Interview Prep'
 
-      const description = videoMeta
-        ? `${generatedCards.length} cards from "${videoMeta.title}" by ${videoMeta.channel}`
-        : pdfMeta
-        ? `${generatedCards.length} cards from "${pdfMeta.fileName}" (${pdfMeta.pageCount} pages)`
-        : `${generatedCards.length} cards generated from ${sourceType}`
+        description = `${generatedCards.length} interview questions based on resume${jobDescription.trim() ? ' + job description' : ''}`
+        sourceType = 'interview'
+      } else {
+        sourceType = detectSourceType(src)
+        title = videoMeta?.title
+          ? videoMeta.title
+          : pdfMeta?.fileName
+          ? pdfMeta.fileName.replace(/\.pdf$/i, '')
+          : src.slice(0, 60) + (src.length > 60 ? '...' : '')
+        description = videoMeta
+          ? `${generatedCards.length} cards from "${videoMeta.title}" by ${videoMeta.channel}`
+          : pdfMeta
+          ? `${generatedCards.length} cards from "${pdfMeta.fileName}" (${pdfMeta.pageCount} pages)`
+          : `${generatedCards.length} cards generated from ${sourceType}`
+      }
 
       const deck = await createDeck(user.id, {
         title,
@@ -113,7 +197,6 @@ export default function Generate({ user, onDeckCreated }) {
       reset()
       navigate(`/library/${deck.id}`)
     } catch (err) {
-      // Can't set context error here easily, use alert as fallback
       alert(err.message)
     } finally {
       setSaving(false)
@@ -139,10 +222,13 @@ export default function Generate({ user, onDeckCreated }) {
       {/* Header */}
       <section className="mb-12 animate-fade-in">
         <h2 className="font-headline text-3xl md:text-4xl font-extrabold tracking-tight text-on-surface mb-4">
-          Create Flashcards
+          {isInterview ? 'Interview Prep' : 'Create Flashcards'}
         </h2>
         <p className="text-on-surface-variant text-lg leading-relaxed max-w-xl">
-          Transform any topic, video, or document into study-ready flashcards with AI.
+          {isInterview
+            ? 'Upload your resume and job description to generate targeted interview questions.'
+            : 'Transform any topic, video, or document into study-ready flashcards with AI.'
+          }
         </p>
       </section>
 
@@ -170,7 +256,7 @@ export default function Generate({ user, onDeckCreated }) {
         </div>
         <div>
           <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
-            Difficulty
+            {isInterview ? 'Depth' : 'Difficulty'}
           </label>
           <div className="flex gap-2">
             {difficultyOptions.map(d => (
@@ -188,19 +274,147 @@ export default function Generate({ user, onDeckCreated }) {
             ))}
           </div>
         </div>
-        {estimatedCards && (
+        {isInterview && (
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
+              Questions
+            </label>
+            <div className="flex gap-2">
+              {[10, 25, 50].map(n => (
+                <button
+                  key={n}
+                  onClick={() => setQuestionCount(n)}
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                    questionCount === n
+                      ? 'primary-gradient text-on-primary editorial-shadow'
+                      : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {estimatedCards && !isInterview && (
           <span className="text-sm text-on-surface-variant font-medium pb-2">
             ~{estimatedCards} cards
           </span>
         )}
       </section>
 
-      {/* Input */}
-      <InputBar
-        onSubmit={handleGenerate}
-        onFileUpload={handleFileUpload}
-        loading={generating}
-      />
+      {/* ── Interview Prep Panel ─────────────────────────────────────── */}
+      {isInterview && (
+        <section className="mb-8 space-y-6 animate-fade-in">
+          {/* Resume upload */}
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
+              Resume <span className="text-primary">*</span>
+            </label>
+            {!resumePreview ? (
+              <button
+                type="button"
+                onClick={() => resumeFileRef.current?.click()}
+                disabled={resumeLoading}
+                className="w-full border-2 border-dashed border-outline-variant/20 rounded-2xl p-8 text-center cursor-pointer hover:border-primary/30 hover:bg-surface-container-lowest/50 transition-all"
+              >
+                {resumeLoading ? (
+                  <>
+                    <span className="material-symbols-outlined text-primary text-3xl mb-2 animate-spin">progress_activity</span>
+                    <p className="text-on-surface-variant text-sm">Processing resume...</p>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-primary text-3xl mb-2">upload_file</span>
+                    <p className="text-on-surface-variant text-sm">Click to upload your resume</p>
+                    <p className="text-on-surface-variant/50 text-xs mt-1">PDF format</p>
+                  </>
+                )}
+              </button>
+            ) : (
+              <div className="bg-surface-container-lowest rounded-2xl p-4 editorial-shadow flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-primary text-xl">description</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-on-surface text-sm truncate">{resumePreview.fileName}</p>
+                  <p className="text-xs text-on-surface-variant">{resumePreview.pageCount} page{resumePreview.pageCount !== 1 ? 's' : ''} · {resumePreview.wordCount.toLocaleString()} words</p>
+                </div>
+                <button
+                  onClick={() => setResumePreview(null)}
+                  className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high transition-colors"
+                >
+                  <span className="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+            )}
+            <input ref={resumeFileRef} type="file" className="hidden" accept=".pdf" onChange={handleResumeUpload} />
+            {resumeError && (
+              <p className="text-error text-xs mt-2">{resumeError}</p>
+            )}
+          </div>
+
+          {/* Company name + Job title row */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
+                Company Name <span className="text-on-surface-variant/40">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={companyName}
+                onChange={e => setCompanyName(e.target.value)}
+                placeholder="e.g., Google, Meta, Stripe"
+                className="w-full bg-surface-container-lowest rounded-xl px-4 py-3 text-on-surface text-sm border-none focus:ring-1 focus:ring-outline-variant/20 placeholder:text-on-surface-variant/40"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
+                Job Title <span className="text-on-surface-variant/40">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={jobTitle}
+                onChange={e => setJobTitle(e.target.value)}
+                placeholder="e.g., Senior Data Scientist"
+                className="w-full bg-surface-container-lowest rounded-xl px-4 py-3 text-on-surface text-sm border-none focus:ring-1 focus:ring-outline-variant/20 placeholder:text-on-surface-variant/40"
+              />
+            </div>
+          </div>
+
+          {/* Job description */}
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
+              Job Description <span className="text-on-surface-variant/40">(optional — greatly improves question relevance)</span>
+            </label>
+            <textarea
+              value={jobDescription}
+              onChange={e => setJobDescription(e.target.value)}
+              placeholder="Paste the full job description including responsibilities, requirements, and company details..."
+              className="w-full bg-surface-container-lowest rounded-xl p-4 text-on-surface text-sm border-none focus:ring-1 focus:ring-outline-variant/20 resize-none placeholder:text-on-surface-variant/40"
+              rows={6}
+            />
+          </div>
+
+          {/* Generate button */}
+          <button
+            onClick={handleInterviewGenerate}
+            disabled={!resumePreview || generating}
+            className="w-full py-4 rounded-full primary-gradient text-on-primary font-bold text-lg editorial-shadow pressable disabled:opacity-40 transition-opacity"
+          >
+            {generating ? 'Generating...' : `Generate ${questionCount} Interview Questions`}
+          </button>
+        </section>
+      )}
+
+      {/* ── Standard Input (hidden in interview mode) ────────────────── */}
+      {!isInterview && (
+        <InputBar
+          onSubmit={handleGenerate}
+          onFileUpload={handleFileUpload}
+          loading={generating}
+        />
+      )}
 
       {/* YouTube metadata card — shown during/after generation */}
       {videoMeta && (
@@ -291,7 +505,7 @@ export default function Generate({ user, onDeckCreated }) {
           <div className="flex justify-between items-center mb-8">
             <div>
               <h3 className="font-headline text-xl font-bold">
-                {generatedCards.length} Cards Generated
+                {generatedCards.length} {activeSourceType === 'interview' ? 'Questions' : 'Cards'} Generated
               </h3>
               {costInfo && (
                 <p className="text-on-surface-variant text-xs mt-1">
@@ -324,13 +538,17 @@ export default function Generate({ user, onDeckCreated }) {
                     <p className="text-on-surface-variant text-sm leading-relaxed">{card.back}</p>
                     {card.explanation && (
                       <div className="mt-3 pt-3 border-t border-outline-variant/10">
-                        <span className="text-[10px] uppercase tracking-widest text-primary font-bold">ELI5</span>
+                        <span className="text-[10px] uppercase tracking-widest text-primary font-bold">
+                          {activeSourceType === 'interview' ? 'What They Evaluate' : 'ELI5'}
+                        </span>
                         <p className="text-on-surface-variant text-xs mt-1 leading-relaxed">{card.explanation}</p>
                       </div>
                     )}
                     {card.mnemonic && (
                       <div className="mt-2">
-                        <span className="text-[10px] uppercase tracking-widest text-tertiary font-bold">Mnemonic</span>
+                        <span className="text-[10px] uppercase tracking-widest text-tertiary font-bold">
+                          {activeSourceType === 'interview' ? 'Key Points' : 'Mnemonic'}
+                        </span>
                         <p className="text-on-surface-variant text-xs mt-1 leading-relaxed">{card.mnemonic}</p>
                       </div>
                     )}

@@ -26,7 +26,7 @@ export function GenerationProvider({ children }) {
     setSourceLabel('')
   }, [])
 
-  const startGeneration = useCallback(async ({ input, fileMeta, sourceType, numCards, difficulty, purpose }) => {
+  const startGeneration = useCallback(async ({ input, fileMeta, sourceType, numCards, difficulty, purpose, resumeFile, companyName, jobTitle, jobDescription }) => {
     setGenerating(true)
     setGeneratedCards([])
     setError(null)
@@ -41,8 +41,9 @@ export function GenerationProvider({ children }) {
     }
 
     setStatus(
-      sourceType === 'youtube' ? 'Connecting to YouTube...'
-        : sourceType === 'pdf' ? `Processing ${fileMeta.fileName}...`
+      sourceType === 'interview' ? 'Analyzing your resume...'
+        : sourceType === 'youtube' ? 'Connecting to YouTube...'
+        : sourceType === 'pdf' ? `Processing ${fileMeta?.fileName}...`
         : 'Analyzing your input...'
     )
 
@@ -53,6 +54,10 @@ export function GenerationProvider({ children }) {
         numCards,
         difficulty,
         purpose,
+        resumeFile,
+        companyName,
+        jobTitle,
+        jobDescription,
         onChunk: (data) => {
           if (data.status) setStatus(data.status)
           if (data.meta) setVideoMeta(data.meta)

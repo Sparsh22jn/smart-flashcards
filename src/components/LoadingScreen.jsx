@@ -34,7 +34,8 @@ export default function LoadingScreen({ source, sourceType, status, cardCount })
   const currentIdx = stepOrder.indexOf(currentStep)
   const progress = currentStep === 'done' ? 100 : Math.min(95, currentIdx * 30 + Math.min(elapsed * 1.5, 28))
 
-  const sourceLabel = sourceType === 'youtube' ? 'YouTube Video'
+  const sourceLabel = sourceType === 'interview' ? 'Interview Prep'
+    : sourceType === 'youtube' ? 'YouTube Video'
     : sourceType === 'pdf' ? 'PDF Document'
     : sourceType === 'paste' ? 'Pasted Content'
     : source?.length > 50 ? source.slice(0, 50) + '...' : source
