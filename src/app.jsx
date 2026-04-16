@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useLocation } from 'react-router-dom'
 import { getUser, onAuthChange, signOut } from './lib/auth'
 import { fetchDecks, fetchStudySessions, fetchCostTracker, fetchDeckProgress, fetchUserProfile, fetchStreak } from './lib/data'
 import Layout from './components/Layout'
@@ -12,8 +12,11 @@ import DeckDetail from './pages/DeckDetail'
 import Study from './pages/Study'
 import Progress from './pages/Progress'
 import Settings from './pages/Settings'
+import ResetPassword from './pages/ResetPassword'
 
 export default function App() {
+  const location = useLocation()
+  const isResetPath = location.pathname === '/reset-password'
   const [user, setUser] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [decks, setDecks] = useState([])
@@ -57,6 +60,11 @@ export default function App() {
     if (!user) return
     fetchDecks(user.id).then(setDecks).catch(console.error)
   }, [user])
+
+  // Password reset flow runs independently of auth state — reached via email link.
+  if (isResetPath) {
+    return <ResetPassword />
+  }
 
   // Auth gate
   if (!authChecked) {
