@@ -74,6 +74,37 @@ export default function Settings({ user, costTracker }) {
           </div>
         </div>
 
+        {/* About */}
+        <div className="group">
+          <div className="space-y-1">
+            <div className="w-full flex justify-between items-center py-4 px-4 rounded-xl">
+              <span className="font-headline text-2xl font-semibold tracking-tight text-on-surface">About</span>
+              <span className="text-on-surface-variant font-body text-sm">v1.0.0</span>
+            </div>
+            <div className="px-4 text-on-surface-variant text-sm space-y-3">
+              <p>
+                Smart FlashCards turns any topic, PDF, pasted text, or YouTube video into
+                exam-grade flashcards with spaced repetition, so studying feels like progress
+                instead of guesswork.
+              </p>
+              <p>
+                Built with React, Vite, Tailwind, and Supabase. AI generation runs on Claude
+                via Supabase Edge Functions.
+              </p>
+              <p>
+                <a
+                  href="https://github.com/Sparsh22jn/smart-flashcards"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:opacity-80 transition-opacity"
+                >
+                  View source on GitHub →
+                </a>
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* Destructive actions */}
         <div className="pt-12 mt-12">
           <div className="bg-surface-container-low rounded-2xl p-8 text-center space-y-4">
